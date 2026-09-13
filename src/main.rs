@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Serve => {
             info!("Starting DocuGraph MCP server on stdio transport...");
             eprintln!("DocuGraph MCP ready to accept JSON-RPC on stdin");
-            docugraph::mcp::server::run_stdio_server().await?;
+            docugraph::mcp::DocuGraphServer::serve_stdio().await?;
         }
         Commands::Index { path } => {
             info!(target: "cli", path = %path, "Indexing document");
