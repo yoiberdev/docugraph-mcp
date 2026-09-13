@@ -12,14 +12,40 @@ impl std::fmt::Display for DocumentId {
     }
 }
 
+impl std::borrow::Borrow<str> for DocumentId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for DocumentId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for DocumentId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for DocumentId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /// Metadata extracted from a document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentMetadata {
+    pub id: String,
     pub title: String,
     pub author: Option<String>,
     pub total_pages: u32,
+    pub total_sections: u32,
     pub file_size_bytes: u64,
-    pub sha256_hash: String,
+    pub content_hash: String,
     pub indexed_at: String,
 }
 
@@ -56,6 +82,32 @@ pub struct SectionNode {
 }
 
 impl SectionNode {
+    /// Create a new section node with default empty children and preview.
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        level: u32,
+        page_start: u32,
+        page_end: u32,
+        parent_id: Option<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            level,
+            page_start,
+            page_end,
+            parent_id,
+            children: Vec::new(),
+            content_preview: String::new(),
+        }
+    }
+
+    /// Add a child section node.
+    pub fn add_child(&mut self, child: SectionNode) {
+        self.children.push(child);
+    }
+
     /// Count total sections including this node and all descendant nodes recursively.
     pub fn total_count(&self) -> usize {
         1 + self.children.iter().map(|c| c.total_count()).sum::<usize>()
@@ -81,6 +133,22 @@ pub struct Document {
 }
 
 impl Document {
+    /// Create a new document with given metadata.
+    pub fn new(metadata: DocumentMetadata) -> Self {
+        let id = DocumentId(metadata.id.clone());
+        Self {
+            id,
+            metadata,
+            pages: Vec::new(),
+            sections: Vec::new(),
+        }
+    }
+
+    /// Add a page to the document.
+    pub fn add_page(&mut self, page: Page) {
+        self.pages.push(page);
+    }
+
     /// Get the total count of sections across the entire document outline.
     pub fn total_sections(&self) -> usize {
         self.sections.iter().map(|s| s.total_count()).sum()

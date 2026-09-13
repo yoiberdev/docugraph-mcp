@@ -19,6 +19,7 @@ Cargo.lock
 /data/
 /indexes/
 /storage_cache/
+/.docugraph_cache/
 /evaluation/output/
 
 # PDF files with potential copyright (User provided only)

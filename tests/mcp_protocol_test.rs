@@ -1,3 +1,4 @@
+use docugraph::document::model::{Document, DocumentMetadata};
 use docugraph::mcp::{
     DocuGraphServer,
     tools::{DocumentInfoParams, PingParams},
@@ -36,17 +37,46 @@ async fn test_document_ping_tool() {
 #[tokio::test]
 async fn test_document_list_tool() {
     let server = DocuGraphServer::new();
-    let list_json = server.document_list().await;
+    let doc = Document::new(DocumentMetadata {
+        id: "sample-doc".to_string(),
+        title: "Sample Doc".to_string(),
+        author: None,
+        total_pages: 1,
+        total_sections: 0,
+        file_size_bytes: 100,
+        content_hash: "hash123".to_string(),
+        indexed_at: "2026-09-13T00:00:00Z".to_string(),
+    });
+    server.register_document(doc).await;
 
-    // Verify valid JSON response structure
+    let list_json = server.document_list().await;
     let parsed: serde_json::Value = serde_json::from_str(&list_json).expect("valid JSON array");
     assert!(parsed.is_array());
     assert!(!parsed.as_array().unwrap().is_empty());
+    assert!(
+        parsed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["id"] == "sample-doc")
+    );
 }
 
 #[tokio::test]
 async fn test_document_info_tool() {
     let server = DocuGraphServer::new();
+    let doc = Document::new(DocumentMetadata {
+        id: "test_doc_gof".to_string(),
+        title: "GoF Design Patterns".to_string(),
+        author: Some("GoF".to_string()),
+        total_pages: 5,
+        total_sections: 1,
+        file_size_bytes: 500,
+        content_hash: "hash_gof".to_string(),
+        indexed_at: "2026-09-13T00:00:00Z".to_string(),
+    });
+    server.register_document(doc).await;
+
     let info_json = server
         .document_info(Parameters(DocumentInfoParams {
             document_id: "test_doc_gof".to_string(),
@@ -55,5 +85,6 @@ async fn test_document_info_tool() {
 
     let parsed: serde_json::Value = serde_json::from_str(&info_json).expect("valid JSON object");
     assert_eq!(parsed["id"], "test_doc_gof");
+    assert_eq!(parsed["title"], "GoF Design Patterns");
     assert!(parsed["sections_preview"].is_array());
 }

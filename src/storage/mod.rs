@@ -1,7 +1,7 @@
-//! Storage and persistence abstractions for documents, vectors, and graph relations.
+//! Storage and persistence abstractions for documents, cache, and indices.
 
-use anyhow::Result;
+pub mod cache;
+pub mod store;
 
-pub trait StorageEngine: Send + Sync {
-    fn initialize(&self) -> Result<()>;
-}
+pub use cache::DiskCache;
+pub use store::DocumentStore;

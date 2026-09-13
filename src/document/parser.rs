@@ -82,13 +82,16 @@ pub fn load_pdf_from_path(path: impl AsRef<Path>) -> Result<Document> {
     let title = extract_pdf_title(&pdf_doc).unwrap_or_else(|| file_stem.to_string());
     let author = extract_pdf_author(&pdf_doc);
     let doc_id = DocumentId(slugify_title(&title));
+    let total_sections = sections.iter().map(|s| s.total_count()).sum::<usize>() as u32;
 
     let metadata = DocumentMetadata {
+        id: doc_id.0.clone(),
         title,
         author,
         total_pages,
+        total_sections,
         file_size_bytes,
-        sha256_hash,
+        content_hash: sha256_hash,
         indexed_at: chrono_timestamp_iso8601(),
     };
 

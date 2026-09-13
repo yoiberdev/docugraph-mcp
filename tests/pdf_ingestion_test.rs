@@ -133,7 +133,7 @@ fn test_real_pdf_loading_and_extraction() {
 
     assert!(doc.metadata.total_pages > 200, "Should have over 200 pages");
     assert!(
-        !doc.metadata.sha256_hash.is_empty(),
+        !doc.metadata.content_hash.is_empty(),
         "SHA-256 hash must be present"
     );
     assert!(!doc.pages.is_empty(), "Extracted pages should not be empty");
