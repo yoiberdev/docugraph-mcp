@@ -1,0 +1,23 @@
+[package]
+name = "docugraph"
+version = "0.1.0"
+edition = "2024"
+description = "Universal Document Knowledge Graph MCP Server for AI Agents"
+readme = "README.md"
+license = "MIT"
+keywords = ["mcp", "pdf", "rag", "retrieval", "graph"]
+categories = ["command-line-utilities", "development-tools"]
+repository = "https://github.com/your-org/docugraph-mcp"
+
+[dependencies]
+tokio = { version = "1.43", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+
+[dev-dependencies]
+tempfile = "3.17"
