@@ -1,6 +1,6 @@
 # DocuGraph MCP
 
-[![CI](https://github.com/your-org/docugraph-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/docugraph-mcp/actions/workflows/ci.yml)
+[![CI](https://github.com/yoiberdev/docugraph-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/yoiberdev/docugraph-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-2024%20Edition-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/Protocol-MCP%20stdio-blue.svg)](https://modelcontextprotocol.io/)
@@ -57,7 +57,7 @@ flowchart TD
 
 ### Compilación local
 ```bash
-git clone https://github.com/your-org/docugraph-mcp.git
+git clone https://github.com/yoiberdev/docugraph-mcp.git
 cd docugraph-mcp
 cargo build --release
 ```

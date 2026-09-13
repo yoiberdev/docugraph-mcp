@@ -7,7 +7,7 @@ readme = "README.md"
 license = "MIT"
 keywords = ["mcp", "pdf", "rag", "retrieval", "graph"]
 categories = ["command-line-utilities", "development-tools"]
-repository = "https://github.com/your-org/docugraph-mcp"
+repository = "https://github.com/yoiberdev/docugraph-mcp"
 
 [dependencies]
 tokio = { version = "1.43", features = ["full"] }
