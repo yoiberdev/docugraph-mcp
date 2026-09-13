@@ -1,6 +1,6 @@
 # Guía de Flujo Git, Versionado y Releases
 
-Este documento define la estrategia de control de versiones, convención de commits y ciclo de vida de releases para **DocuGraph MCP**, aplicando un análisis riguroso desde primeros principios y contrastándolo con las enseñanzas del libro *Aprendiendo Git* de Miguel Ángel Durán, referenciado en [`C:\proyectos\chaika-stage\docs\aprendiendo-git-pdf.pdf`](file:///C:/proyectos/chaika-stage/docs/aprendiendo-git-pdf.pdf).
+Este documento define la estrategia de control de versiones, convención de commits y ciclo de vida de releases para **DocuGraph MCP**, aplicando un análisis riguroso de ingeniería de software y buenas prácticas de desarrollo ágil.
 
 ---
 
@@ -12,7 +12,7 @@ Este documento define la estrategia de control de versiones, convención de comm
 * **Objetivo:** Máxima velocidad de entrega, cero fricción burocrática y rama principal siempre verde.
 
 ### Decisión: *Simplified Trunk-Based con Ship / Show / Ask Ligero*
-En lugar de un modelo pesado con múltiples ramas de larga duración, adoptamos **Trunk-Based Development** simplificado, integrando el paradigma *Ship / Show / Ask* presentado en [`aprendiendo-git-pdf.pdf` (pp. 108-115)](file:///C:/proyectos/chaika-stage/docs/aprendiendo-git-pdf.pdf#page=108):
+En lugar de un modelo pesado con múltiples ramas de larga duración, adoptamos **Trunk-Based Development** simplificado, integrando el paradigma *Ship / Show / Ask*:
 
 ```text
 main ──●──────●──────────●───────────●───────●─── (siempre verde, CI validado)
@@ -26,19 +26,19 @@ main ──●──────●──────────●────
    * Cada commit en `main` debe compilar (`cargo check`), pasar pruebas (`cargo test`) y linter (`cargo clippy`).
 
 2. **Categorización de cambios (*Ship / Show / Ask*):**
-   * **Ship (Directo a `main`):** Cambios triviales, corrección de erratas en documentación, actualización de `.gitignore` o tareas menores sin riesgo (inspirado en p. 109 de `aprendiendo-git-pdf.pdf`).
-   * **Show (Rama corta + PR inmediata):** Funcionalidades bien delimitadas donde se crea una PR para que la CI valide el build y quede registro visual del cambio, fusionándose sin esperar aprobación (p. 110).
-   * **Ask (Rama corta + PR con discusión):** Decisiones de arquitectura complejas (ej. cambio en el motor de embeddings o persistencia) donde se busca debate antes del merge (p. 112).
+   * **Ship (Directo a `main`):** Cambios triviales, corrección de erratas en documentación, actualización de `.gitignore` o tareas menores sin riesgo.
+   * **Show (Rama corta + PR inmediata):** Funcionalidades bien delimitadas donde se crea una PR para que la CI valide el build y quede registro visual del cambio, fusionándose sin esperar aprobación.
+   * **Ask (Rama corta + PR con discusión):** Decisiones de arquitectura complejas (ej. cambio en el motor de embeddings o persistencia) donde se busca debate antes del merge.
 
 3. **Nombres de ramas efímeras:**
    * Formato: `<tipo>/<descripcion-kebab>` (ej. `feat/lopdf-layout`, `fix/stderr-logging`, `refactor/context-budget`).
-   * Vida máxima de una rama: **1 a 2 días** para evitar divergencias complejas (p. 124).
+   * Vida máxima de una rama: **1 a 2 días** para evitar divergencias complejas.
 
 ---
 
 ## 2. Convención de Commits y su Conexión con SemVer
 
-Adoptamos **Conventional Commits** (siguiendo las reglas de commits semánticos e imperativos descritos en [`aprendiendo-git-pdf.pdf`, pp. 134-138](file:///C:/proyectos/chaika-stage/docs/aprendiendo-git-pdf.pdf#page=134)):
+Adoptamos **Conventional Commits** (siguiendo las reglas de commits semánticos e imperativos estándar de la industria):
 
 ### Formato
 ```text
@@ -50,8 +50,8 @@ Adoptamos **Conventional Commits** (siguiendo las reglas de commits semánticos 
 ```
 
 ### Reglas clave de estilo:
-1. **Verbo imperativo:** `feat: add hybrid search`, no *"added"* ni *"adding"* (p. 134).
-2. **Sin punto final ni puntos suspensivos:** Los títulos son instrucciones directas de < 50 caracteres (pp. 135-136).
+1. **Verbo imperativo:** `feat: add hybrid search`, no *"added"* ni *"adding"*.
+2. **Sin punto final ni puntos suspensivos:** Los títulos son instrucciones directas de < 50 caracteres.
 3. **Prefijos y su mapeo a Semantic Versioning (SemVer):**
 
 | Prefijo | Propósito | Impacto en SemVer (Cargo / Crates.io) |
@@ -76,7 +76,7 @@ El proyecto se encuentra en etapa inicial (`v0.x.y`). En el ecosistema Rust (con
 * **Estabilidad verificada:** Solo taggear cuando `cargo test` y `cargo clippy` pasen limpios en CI.
 
 ### ¿Cómo taggear? (Etiquetas Anotadas):
-Conforme a la buena práctica de Git (p. 102 de [`aprendiendo-git-pdf.pdf`](file:///C:/proyectos/chaika-stage/docs/aprendiendo-git-pdf.pdf#page=102)), nunca usamos tags ligeros para releases, sino **etiquetas anotadas con mensaje descriptivo**:
+Conforme a la buena práctica de Git, nunca usamos tags ligeros para releases, sino **etiquetas anotadas con mensaje descriptivo**:
 
 ```bash
 # 1. Actualizar version en Cargo.toml (ej. version = "0.1.0")
@@ -92,29 +92,29 @@ git push origin v0.1.0
 
 ---
 
-## 4. Análisis del Libro: Prácticas Overkill vs Prácticas de Alto Valor
+## 4. Prácticas Overkill vs Prácticas de Alto Valor
 
-Basándonos en el libro [`C:\proyectos\chaika-stage\docs\aprendiendo-git-pdf.pdf`](file:///C:/proyectos/chaika-stage/docs/aprendiendo-git-pdf.pdf), filtramos lo que realmente aporta valor de lo que resulta sobre-ingeniería para este contexto:
+Para un proyecto ágil y eficiente, filtramos lo que realmente aporta valor de lo que resulta sobre-ingeniería innecesaria:
 
 ### ❌ Prácticas OVERKILL para 1-2 personas en etapa temprana:
 
-1. **Git Flow Tradicional (pp. 89-97):**
-   * *Concepto en PDF:* Mantener ramas concurrentes `master`, `develop`, `release-1.x`, `hotfix-2.x`.
-   * *Por qué es overkill:* El propio autor del modelo (Vincent Driessen) admitió en 2020 que para software moderno añade burocracia innecesaria (citado en p. 104). Para un equipo pequeño no hay versiones en soporte legado simultáneo que justifiquen la fricción de sincronizar 4 ramas.
-2. **Husky / Commitlint basado en Node.js (pp. 132, 139, 153-172):**
-   * *Concepto en PDF:* Instalar herramientas de Node (`npm install husky @commitlint/cli`) para validar mensajes en githooks locales.
-   * *Por qué es overkill:* Meter dependencias de Node.js (`node_modules`) en un repositorio de **Rust puro** ensucia el entorno. Es preferible validar la sintaxis y calidad en GitHub Actions CI sin atar al desarrollador a runtime de JS en local.
-3. **Branch naming con Jira Issue IDs (p. 141):**
-   * *Concepto en PDF:* Prefijar ramas como `1110-feature/xyz`.
-   * *Por qué es overkill:* Innecesario cuando no existe un Jira corporativo; `feat/ast-parser` es más conciso y claro.
+1. **Git Flow Tradicional:**
+   * Mantener ramas concurrentes `master`, `develop`, `release-1.x`, `hotfix-2.x`.
+   * Añade burocracia innecesaria. Para un equipo pequeño no hay versiones en soporte legado simultáneo que justifiquen la fricción de sincronizar 4 ramas.
+2. **Husky / Commitlint basado en Node.js:**
+   * Instalar herramientas de Node (`npm install husky @commitlint/cli`) para validar mensajes en githooks locales.
+   * Meter dependencias de Node.js (`node_modules`) en un repositorio de **Rust puro** ensucia el entorno. Es preferible validar la sintaxis y calidad en GitHub Actions CI.
+3. **Branch naming con Jira Issue IDs:**
+   * Prefijar ramas como `1110-feature/xyz`.
+   * Innecesario cuando no existe un Jira corporativo; `feat/ast-parser` es más conciso y claro.
 
 ###  Prácticas de ALTO VALOR INMEDIATO:
 
-1. **Tronco único (`main`) siempre verde (pp. 104, 142-143):**
+1. **Tronco único (`main`) siempre verde:**
    * Migración definitiva a `main` y validación automatizada mediante CI para evitar roturas.
-2. **Commits semánticos, atómicos e imperativos (pp. 126, 134-138):**
+2. **Commits semánticos, atómicos e imperativos:**
    * Mensajes concisos en imperativo (`feat: add ...`, `fix: ...`) que cuentan la historia del proyecto y permiten generar changelogs automáticos.
-3. **Pull Requests pequeñas y enfocadas (pp. 137-140, 146):**
+3. **Pull Requests pequeñas y enfocadas:**
    * PRs atómicas que abordan un solo problema (evitando mezclar refactors de formato con nueva lógica).
-4. **Higiene estricta de `.gitignore` (pp. 56-59, 136, 143):**
+4. **Higiene estricta de `.gitignore`:**
    * Prohibido commitear archivos de build (`/target`), bases de datos SQLite locales (`*.db`), índices de Tantivy y variables de entorno (`.env`).

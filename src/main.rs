@@ -19,16 +19,16 @@ struct Cli {
 enum Commands {
     /// Start the Model Context Protocol (MCP) server over stdio
     Serve,
-    /// Index a PDF document or directory into the knowledge graph
+    /// Index a PDF document into the knowledge graph
     Index {
-        /// Path to the PDF file or folder containing PDFs
+        /// Path to the PDF file to ingest
         path: String,
     },
     /// List all currently indexed documents
     List,
-    /// Inspect the structure and metadata of an indexed document
+    /// Inspect the structure and outline of a document
     Info {
-        /// Document identifier or filename
+        /// Document identifier or filesystem path to PDF
         document: String,
     },
 }
@@ -52,18 +52,59 @@ async fn main() -> anyhow::Result<()> {
             docugraph::mcp::DocuGraphServer::serve_stdio().await?;
         }
         Commands::Index { path } => {
-            info!(target: "cli", path = %path, "Indexing document");
-            eprintln!("Indexing requested for: {}", path);
+            info!(target: "cli", path = %path, "Indexing PDF document");
+            let doc = docugraph::document::load_pdf_from_path(&path)?;
+            eprintln!("\n📄 Document Ingested Successfully!");
+            eprintln!("  ID:          {}", doc.id);
+            eprintln!("  Title:       {}", doc.metadata.title);
+            if let Some(author) = &doc.metadata.author {
+                eprintln!("  Author:      {}", author);
+            }
+            eprintln!("  Pages:       {}", doc.metadata.total_pages);
+            eprintln!("  Size:        {} bytes", doc.metadata.file_size_bytes);
+            eprintln!("  SHA-256:     {}", doc.metadata.sha256_hash);
+            eprintln!("  Sections:    {}", doc.total_sections());
+            eprintln!("\n🌳 Document Outline:");
+            print_outline_tree(&doc.sections, 0);
+            eprintln!();
         }
         Commands::List => {
             info!(target: "cli", "Listing indexed documents");
-            eprintln!("No documents indexed yet. Run 'docugraph index <file.pdf>'");
+            eprintln!(
+                "To list active documents via MCP, use the 'document_list' tool in your agent client."
+            );
+            eprintln!("To index a document, run: docugraph index <file.pdf>");
         }
         Commands::Info { document } => {
             info!(target: "cli", document = %document, "Retrieving document info");
-            eprintln!("Information for document: {}", document);
+            let path = std::path::Path::new(&document);
+            if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+                let doc = docugraph::document::load_pdf_from_path(path)?;
+                eprintln!("\n📄 Document: {}", doc.metadata.title);
+                eprintln!("  ID:       {}", doc.id);
+                eprintln!("  Pages:    {}", doc.metadata.total_pages);
+                eprintln!("  Sections: {}", doc.total_sections());
+                eprintln!("\n🌳 Outline Preview:");
+                print_outline_tree(&doc.sections, 0);
+            } else {
+                eprintln!("Document identifier or path: {}", document);
+                eprintln!("To inspect a PDF directly, run: docugraph info path/to/file.pdf");
+            }
         }
     }
 
     Ok(())
+}
+
+fn print_outline_tree(sections: &[docugraph::document::SectionNode], depth: usize) {
+    for s in sections {
+        let indent = "  ".repeat(depth);
+        eprintln!(
+            "{indent}├── {} [pp. {}-{}]",
+            s.title, s.page_start, s.page_end
+        );
+        if !s.children.is_empty() {
+            print_outline_tree(&s.children, depth + 1);
+        }
+    }
 }
