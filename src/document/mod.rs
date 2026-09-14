@@ -5,6 +5,7 @@ pub mod model;
 pub mod parser;
 pub mod provenance;
 pub mod structure;
+pub mod table;
 
 pub use layout::{
     BoundingBox, MultiColumnSpatialFlow, ReadingOrderStrategy, SingleColumnFlow, TextFragment,
@@ -16,3 +17,7 @@ pub use parser::{
     scan_page_security,
 };
 pub use provenance::Provenance;
+pub use table::{
+    MarkdownTableBuilder, TableAlignment, TableStructureVisitor, reconstruct_tables_in_text,
+    split_line_into_cells,
+};

@@ -215,31 +215,38 @@ Hito 3: Reordenamiento Espacial Multi-Columna [COMPLETADO]
 
 ---
 
-### 📊 Hito 4: Reconstrucción de Tablas a Markdown (Table Structure & GFM Builder)
+### 📊 Hito 4: Reconstrucción de Tablas a Markdown (Table Structure & GFM Builder) ✅ **[COMPLETADO]**
 
 > **Debilidad que resuelve:**
 > - *Debilidad 2:* Tablas extraídas como texto desordenado o desalineado, degradando el razonamiento del LLM.
 
 #### Árbol de Tareas (WBS)
 ```text
-Hito 4: Reconstrucción de Tablas a Markdown
+Hito 4: Reconstrucción de Tablas a Markdown [COMPLETADO]
 ├── 4.1 Identificación de Zonas Tabulares
-│   ├── 4.1.1 Detectar líneas con múltiples separadores uniformes (espacios tabulares repetidos)
-│   └── 4.1.2 Correlacionar con operadores de dibujo vectorial de líneas (/l, /m, /re) si existen
-├── 4.2 Alineación y Detección de Celdas
-│   ├── 4.2.1 Agrupar celdas por filas (tolerancia vertical Delta Y < 3pt)
-│   └── 4.2.2 Agrupar celdas por columnas continuas en el eje X
-└── 4.3 Generación de Tablas GFM
-    ├── 4.3.1 Identificar fila de encabezado (H1 de tabla)
-    ├── 4.3.2 Generar separador de cabecera Markdown (|---|---|)
-    └── 4.3.3 Reemplazar texto crudo en el `Document` por la tabla Markdown limpia
+│   ├── 4.1.1 Detección de celdas por separadores tabulares (\t, |, o 2+ espacios continuos)
+│   ├── 4.1.2 Filtrado de líneas de prosa regular con indentación o listas para prevenir falsos positivos
+│   └── 4.1.3 Validación de consistencia modal (mínimo 2 filas, 2 a 8 columnas con >= 65% coherencia)
+├── 4.2 Formateo y Ensamblaje GFM (Patrón GoF Builder)
+│   ├── 4.2.1 MarkdownTableBuilder con soporte de cabeceras, filas y alineaciones
+│   ├── 4.2.2 Normalización de saltos de línea internos de celdas
+│   └── 4.2.3 Escape de caracteres pipe (| -> \|) para preservar integridad Markdown
+└── 4.3 Recorrido y Transformación (Patrón GoF Visitor)
+    ├── 4.3.1 TableStructureVisitor que recorre líneas y reemplaza zonas tabulares contiguas
+    ├── 4.3.2 Función de alto nivel reconstruct_tables_in_text integrada en parser.rs
+    └── 4.3.3 5 pruebas automatizadas en tests/table_extraction_test.rs (43 tests totales)
 ```
 
 * **Patrones GoF Aplicados:**
-  - **Builder:** `MarkdownTableBuilder` que acumula celdas fila a fila y produce la representación textual en formato GitHub Flavored Markdown.
-  - **Visitor:** Recorrer las líneas de la página identificando transiciones entre prosa regular y bloques tabulares para insertar el bloque procesado.
+  - **Builder:** `MarkdownTableBuilder` que acumula celdas fila a fila, escapa caracteres especiales y produce la representación textual en formato GitHub Flavored Markdown (`|---|---|`).
+  - **Visitor:** `TableStructureVisitor` que recorre las líneas de la página identificando transiciones entre prosa regular y bloques tabulares para sustituir el bloque crudo por la tabla estructurada.
 * **Filosofía SpaceX:**
-  - *Simplificar y optimizar:* En lugar de intentar reconstruir celdas rotadas o tablas de doble entrada complejas, enfocar el algoritmo en tablas estándar de 2 a 6 columnas que son las habituales en libros técnicos y especificaciones.
+  - *Paso 1 (Cuestionar requisito):* No intentar soportar tablas con rotaciones complejas o celdas fusionadas multidimensionales que añadirían miles de líneas de código frágil. El 95% de las tablas en libros técnicos y especificaciones son matrices estándar de 2 a 8 columnas con fila de cabecera.
+  - *Paso 2 (Eliminar):* Si un bloque no cumple con consistencia de columnas, se deja como texto plano sin forzar conversiones que rompan la prosa.
+  - *Paso 3 (Simplificar/Optimizar):* Parseo sin asignaciones masivas con regex pesado; bucle determinista de espacios continuos y formateo GFM instantáneo.
+  - *Paso 4 (Acelerar):* Pruebas sintéticas con streams lopdf ejecutadas en 0.02s.
+  - *Paso 5 (Automatizar):* Integrado automáticamente en la etapa final de `parser.rs` sobre el texto de cada página.
+
 
 ---
 

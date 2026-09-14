@@ -288,7 +288,13 @@ pub fn load_pdf_from_path_with_password(
             },
         };
 
+        // Reconstruct tabular text zones into GitHub Flavored Markdown (GFM) tables
+        if text.contains("  ") || text.contains('\t') || text.contains('|') {
+            text = super::table::reconstruct_tables_in_text(&text);
+        }
+
         let untrusted_detected = security_scan.untrusted_text_detected;
+
         if untrusted_detected {
             doc_untrusted_detected = true;
             warn!(
