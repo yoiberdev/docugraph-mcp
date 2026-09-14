@@ -48,6 +48,20 @@ enum Commands {
         #[arg(short, long, default_value = "5")]
         limit: usize,
     },
+    /// Render a page of a document to a PNG image file
+    Render {
+        /// Document identifier or filesystem path to PDF
+        document: String,
+        /// Page number to render (1-based)
+        #[arg(short, long, default_value = "1")]
+        page: u32,
+        /// Output PNG file path (default: <doc_id>_p<page>.png)
+        #[arg(short, long)]
+        out: Option<String>,
+        /// Maximum resolution width in pixels (default: 1024)
+        #[arg(short, long, default_value = "1024")]
+        width: u32,
+    },
 }
 
 #[tokio::main]
@@ -274,6 +288,48 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("      {}", hit.snippet);
                 }
                 eprintln!();
+            }
+        }
+        Commands::Render {
+            document,
+            page,
+            out,
+            width,
+        } => {
+            info!(target: "cli", document = %document, page = page, "Rendering page to PNG");
+            let cache_dir = DiskCache::default_dir();
+            let renderer = docugraph::multimodal::CachedPageRendererProxy::new(Some(&cache_dir));
+
+            let doc = if let Some(d) = store.get(&document) {
+                Some(d)
+            } else {
+                let path = std::path::Path::new(&document);
+                if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+                    Some(docugraph::document::load_pdf_from_path(path)?)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(doc) = doc {
+                let rendered = renderer.render_document_page(&doc, page, width)?;
+                let output_path = out.unwrap_or_else(|| format!("{}_p{}.png", doc.id, page));
+                std::fs::write(&output_path, &rendered.png_bytes)?;
+                eprintln!("\n🖼️ Page Rendered Successfully!");
+                eprintln!("  Document:    {}", doc.metadata.title);
+                eprintln!("  Page:        {}", page);
+                eprintln!("  Dimensions:  {}x{} px", rendered.width, rendered.height);
+                eprintln!("  Output:      {}", output_path);
+                eprintln!(
+                    "  Cached:      {}",
+                    if rendered.from_cache {
+                        "Yes (Disk Hit)"
+                    } else {
+                        "No (Fresh Rasterization)"
+                    }
+                );
+            } else {
+                eprintln!("Document not found: {}", document);
             }
         }
     }

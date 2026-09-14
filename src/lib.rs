@@ -6,5 +6,6 @@
 pub mod document;
 pub mod knowledge;
 pub mod mcp;
+pub mod multimodal;
 pub mod retrieval;
 pub mod storage;

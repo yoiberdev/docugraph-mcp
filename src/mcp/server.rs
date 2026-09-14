@@ -10,6 +10,7 @@ use tracing::info;
 
 use super::tools::*;
 use crate::document::model::{Document, PageKind, SectionNode};
+use crate::multimodal::CachedPageRendererProxy;
 use crate::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, HybridWeights};
 use crate::storage::{DiskCache, DocumentStore};
 
@@ -18,6 +19,7 @@ use crate::storage::{DiskCache, DocumentStore};
 pub struct DocuGraphServer {
     tool_router: ToolRouter<Self>,
     store: DocumentStore,
+    renderer: CachedPageRendererProxy,
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -43,18 +45,35 @@ impl Default for DocuGraphServer {
 impl DocuGraphServer {
     /// Create a new server instance with the auto-generated tool router and disk-backed store.
     pub fn new() -> Self {
-        let cache = DiskCache::new(DiskCache::default_dir()).ok();
+        let cache_dir = DiskCache::default_dir();
+        let cache = DiskCache::new(&cache_dir).ok();
+        let renderer = CachedPageRendererProxy::new(Some(&cache_dir));
         Self {
             tool_router: Self::tool_router(),
             store: DocumentStore::new(cache),
+            renderer,
         }
     }
 
     /// Create a server with a custom DocumentStore (useful for testing).
     pub fn with_store(store: DocumentStore) -> Self {
+        let renderer = CachedPageRendererProxy::new(None::<&std::path::Path>);
         Self {
             tool_router: Self::tool_router(),
             store,
+            renderer,
+        }
+    }
+
+    /// Create a server with custom DocumentStore and renderer.
+    pub fn with_store_and_renderer(
+        store: DocumentStore,
+        renderer: CachedPageRendererProxy,
+    ) -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            store,
+            renderer,
         }
     }
 
@@ -384,6 +403,49 @@ impl DocuGraphServer {
             out
         } else {
             format!("Error: Document '{doc_id}' not found.")
+        }
+    }
+
+    /// Render a specific document page to a high-resolution PNG image for visual multimodal inspection.
+    #[tool(
+        name = "document_render_page",
+        description = "Render a specific document page to a high-resolution PNG image for visual inspection (diagrams, complex charts, scans) by Multimodal LLMs."
+    )]
+    pub async fn document_render_page(&self, params: Parameters<RenderPageParams>) -> String {
+        let doc_id = &params.0.document_id;
+        let page_num = params.0.page_number;
+        let max_width = params.0.max_width.unwrap_or(1024);
+
+        if let Some(doc) = self.store.get(doc_id) {
+            match self.renderer.render_document_page(&doc, page_num, max_width) {
+                Ok(rendered) => {
+                    let data_uri = format!("data:image/png;base64,{}", rendered.base64_data);
+                    let res = RenderPageResult {
+                        document_id: doc_id.clone(),
+                        page_number: rendered.page_number,
+                        width: rendered.width,
+                        height: rendered.height,
+                        mime_type: "image/png".to_string(),
+                        base64_image: rendered.base64_data,
+                        data_uri,
+                        from_cache: rendered.from_cache,
+                    };
+                    serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+                }
+                Err(e) => serde_json::json!({
+                    "error": format!("Failed to render page {page_num} of document '{doc_id}': {e}"),
+                    "document_id": doc_id,
+                    "page_number": page_num,
+                })
+                .to_string(),
+            }
+        } else {
+            serde_json::json!({
+                "error": format!("Document '{doc_id}' not found."),
+                "document_id": doc_id,
+                "page_number": page_num,
+            })
+            .to_string()
         }
     }
 }

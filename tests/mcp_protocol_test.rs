@@ -49,6 +49,7 @@ async fn test_document_list_tool() {
         is_encrypted: false,
         untrusted_text_detected: false,
         scanned_pages_count: 0,
+        source_path: None,
     });
     server.register_document(doc).await;
 
@@ -80,6 +81,7 @@ async fn test_document_info_tool() {
         is_encrypted: false,
         untrusted_text_detected: false,
         scanned_pages_count: 0,
+        source_path: None,
     });
     server.register_document(doc).await;
 

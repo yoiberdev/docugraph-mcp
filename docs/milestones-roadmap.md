@@ -250,30 +250,38 @@ Hito 4: Reconstrucción de Tablas a Markdown [COMPLETADO]
 
 ---
 
-### 👁️ Hito 5: Motor Multimodal de Renderizado de Páginas (Visual Page Rendering for Vision LLMs)
+### 👁️ Hito 5: Motor Multimodal de Renderizado de Páginas (Visual Page Rendering for Vision LLMs) `[COMPLETADO]`
 
 > **Debilidad que resuelve:**
 > - *Debilidad 3:* Incapacidad de los LLMs con visión (Claude 3.5 Sonnet, GPT-4o) para inspeccionar diagramas de arquitectura, circuitos o esquemas visuales presentes en los PDFs.
 
 #### Árbol de Tareas (WBS)
 ```text
-Hito 5: Renderizado Visual de Páginas
+Hito 5: Renderizado Visual de Páginas [COMPLETADO]
 ├── 5.1 Capa de Abstracción de Renderizado Gráfico
-│   ├── 5.1.1 Diseñar trait `PageRenderer` desacoplado del core
-│   └── 5.1.2 Implementación nativa ligera (rasterización de página a buffer RGBA)
+│   ├── [x] 5.1.1 Diseñar trait `PageRenderer` desacoplado del core (GoF Adapter)
+│   └── [x] 5.1.2 Implementación nativa ligera (rasterización de página a buffer RGBA puro en Rust)
 ├── 5.2 Conversión y Compresión de Imagen
-│   ├── 5.2.1 Escalar imagen a resolución óptima para LLMs (ej. 150 DPI)
-│   └── 5.2.2 Codificar imagen en PNG y empaquetar en base64
-└── 5.3 Exposición en el Protocolo MCP
-    ├── 5.3.1 Añadir herramienta `document_render_page` (document_id, page_number, max_width)
-    └── 5.3.2 Devolver formato estándar MCP Image Content (type: "image", mimeType: "image/png")
+│   ├── [x] 5.2.1 Escalar imagen a resolución configurable (max_width: 200..2048 px)
+│   └── [x] 5.2.2 Codificar imagen en PNG según RFC-2083 (deflate zlib + CRC-32) y empaquetar en base64
+└── 5.3 Exposición en el Protocolo MCP y CLI
+    ├── [x] 5.3.1 Añadir herramienta `document_render_page` (document_id, page_number, max_width)
+    ├── [x] 5.3.2 Devolver base64 PNG, dimensiones y data URI estándar para LLMs multimodales
+    ├── [x] 5.3.3 Comando CLI `docugraph render --document <DOC> --page <N> --out <FILE>`
+    └── [x] 5.3.4 GoF Proxy: `CachedPageRendererProxy` con persistencia en disco `.docugraph_cache/renders/`
 ```
 
 * **Patrones GoF Aplicados:**
-  - **Adapter:** `PageRendererAdapter` que aísla la librería gráfica subyacente. Si en el futuro se desea compilar sin dependencias de renderizado (modo headless super-ligero), el trait permite desactivarlo mediante un *feature flag* de Cargo (`--features rendering`).
-  - **Proxy:** Caching de miniaturas o renders en disco `.docugraph_cache/renders/` para no re-renderizar la misma página dos veces.
+  - **Adapter:** `PageRenderer` que aísla la rasterización de páginas. `NativePageRenderer` implementa rasterizado espacial puro en Rust sin Poppler ni dependencias de C++.
+  - **Proxy:** `CachedPageRendererProxy` que intercepta las peticiones de renderizado, sirviendo directamente desde disco `.docugraph_cache/renders/` con tiempos de respuesta de milisegundos en cache hits.
 * **Filosofía SpaceX:**
-  - *Eliminar:* No renderizar todas las páginas por adelantado (desperdicio masivo de disco y CPU). Renderizar **únicamente bajo demanda** cuando el agente solicita inspeccionar visualmente una página específica.
+  - *Eliminar:* No renderizar todas las páginas por adelantado (desperdicio masivo de disco y CPU). Renderizar **únicamente bajo demanda** cuando el agente o usuario solicita inspeccionar visualmente una página específica.
+  - *Simplificar:* Codificador PNG conforme a RFC-2083 implementado en ~80 líneas puras de Rust usando compresión zlib estándar (`miniz_oxide`), eliminando binarios nativos externos.
+* **Resultados de Validación:**
+  - 5 tests dedicados en `tests/multimodal_render_test.rs`.
+  - 48 tests pasando en toda la suite (`cargo test --all`).
+  - 0 advertencias de linter (`cargo clippy --all-targets -- -D warnings`).
+
 
 ---
 

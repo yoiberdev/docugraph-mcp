@@ -410,6 +410,7 @@ pub fn load_pdf_from_path_with_password(
         is_encrypted,
         untrusted_text_detected: doc_untrusted_detected,
         scanned_pages_count,
+        source_path: Some(path.to_string_lossy().to_string()),
     };
 
     info!(

@@ -145,3 +145,35 @@ pub struct OutlineNodeResult {
     pub page_end: u32,
     pub children: Vec<OutlineNodeResult>,
 }
+
+/// Parameters for `document_render_page`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RenderPageParams {
+    /// Document identifier or content hash
+    pub document_id: String,
+    /// 1-based page number to render
+    pub page_number: u32,
+    /// Maximum image width in pixels (default: 1024, min: 200, max: 2048)
+    pub max_width: Option<u32>,
+}
+
+/// Result returned by `document_render_page`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RenderPageResult {
+    /// Document identifier
+    pub document_id: String,
+    /// 1-based page number rendered
+    pub page_number: u32,
+    /// Image width in pixels
+    pub width: u32,
+    /// Image height in pixels
+    pub height: u32,
+    /// MIME type (always "image/png")
+    pub mime_type: String,
+    /// Base64-encoded RFC-2083 standard PNG image data
+    pub base64_image: String,
+    /// Complete data URI scheme (e.g. data:image/png;base64,...)
+    pub data_uri: String,
+    /// Whether the rendered image was served from disk cache (GoF Proxy pattern)
+    pub from_cache: bool,
+}

@@ -62,6 +62,8 @@ pub struct DocumentMetadata {
     pub is_encrypted: bool,
     pub untrusted_text_detected: bool,
     pub scanned_pages_count: u32,
+    #[serde(default)]
+    pub source_path: Option<String>,
 }
 
 /// A single extracted page from a document.
