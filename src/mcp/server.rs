@@ -6,6 +6,7 @@ use rmcp::{
     model::{ServerCapabilities, ServerInfo},
     tool, tool_handler, tool_router,
 };
+use std::path::Path;
 use tracing::info;
 
 use super::tools::*;
@@ -44,10 +45,17 @@ impl Default for DocuGraphServer {
 
 impl DocuGraphServer {
     /// Create a new server instance with the auto-generated tool router and disk-backed store.
+    ///
+    /// The cache directory comes from `DOCUGRAPH_CACHE_DIR` (see [`DiskCache::default_dir`]).
     pub fn new() -> Self {
-        let cache_dir = DiskCache::default_dir();
-        let cache = DiskCache::new(&cache_dir).ok();
-        let renderer = CachedPageRendererProxy::new(Some(&cache_dir));
+        Self::with_cache_dir(DiskCache::default_dir())
+    }
+
+    /// Create a server whose document store and page renders live in `cache_dir`.
+    pub fn with_cache_dir(cache_dir: impl AsRef<Path>) -> Self {
+        let cache_dir = cache_dir.as_ref();
+        let cache = DiskCache::new(cache_dir).ok();
+        let renderer = CachedPageRendererProxy::new(Some(cache_dir));
         Self {
             tool_router: Self::tool_router(),
             store: DocumentStore::new(cache),

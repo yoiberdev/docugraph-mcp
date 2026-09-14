@@ -200,7 +200,8 @@ fn test_blank_page_classified_as_empty() {
 
 #[tokio::test]
 async fn test_mcp_server_scanned_warnings_in_tools() {
-    let server = DocuGraphServer::new();
+    let cache = tempfile::tempdir().expect("create temp cache dir");
+    let server = DocuGraphServer::with_cache_dir(cache.path());
     let mut doc = Document::new(DocumentMetadata {
         id: "doc-with-scans".to_string(),
         title: "Manual Escaneado".to_string(),

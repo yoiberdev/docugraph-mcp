@@ -4,10 +4,17 @@ use docugraph::mcp::{
     tools::{DocumentInfoParams, PingParams},
 };
 use rmcp::{ServerHandler, handler::server::wrapper::Parameters};
+use tempfile::{TempDir, tempdir};
+
+/// Server backed by a throwaway cache dir, so tests never write `.docugraph_cache` into the repo.
+fn server_with_temp_cache() -> (DocuGraphServer, TempDir) {
+    let cache = tempdir().expect("create temp cache dir");
+    (DocuGraphServer::with_cache_dir(cache.path()), cache)
+}
 
 #[tokio::test]
 async fn test_server_info_and_capabilities() {
-    let server = DocuGraphServer::new();
+    let (server, _cache) = server_with_temp_cache();
     let info = server.get_info();
 
     assert_eq!(info.server_info.name, "docugraph-mcp");
@@ -17,7 +24,7 @@ async fn test_server_info_and_capabilities() {
 
 #[tokio::test]
 async fn test_document_ping_tool() {
-    let server = DocuGraphServer::new();
+    let (server, _cache) = server_with_temp_cache();
 
     // Default ping message
     let resp = server
@@ -36,7 +43,7 @@ async fn test_document_ping_tool() {
 
 #[tokio::test]
 async fn test_document_list_tool() {
-    let server = DocuGraphServer::new();
+    let (server, _cache) = server_with_temp_cache();
     let doc = Document::new(DocumentMetadata {
         id: "sample-doc".to_string(),
         title: "Sample Doc".to_string(),
@@ -70,7 +77,7 @@ async fn test_document_list_tool() {
 
 #[tokio::test]
 async fn test_document_info_tool() {
-    let server = DocuGraphServer::new();
+    let (server, _cache) = server_with_temp_cache();
     let doc = Document::new(DocumentMetadata {
         id: "test_doc_gof".to_string(),
         title: "GoF Design Patterns".to_string(),
