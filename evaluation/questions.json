@@ -45,5 +45,62 @@
       "requires_provenance": true,
       "max_context_tokens": 600
     }
+  },
+  {
+    "id": "eval-04-strategy-code",
+    "query": "Tengo una clase OrderProcessor con múltiples condicionales switch y queremos colocar cada algoritmo de cálculo en clases separadas e intercambiables. ¿Qué patrón de diseño permite definir una familia de algoritmos y hacerlos intercambiables?",
+    "domain": "design_patterns",
+    "expected_concepts": [
+      "Strategy",
+      "algoritmo",
+      "intercambiables"
+    ],
+    "target_tool": "document_get_context",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 1000
+    }
+  },
+  {
+    "id": "eval-05-observer",
+    "query": "¿Cómo notificar a múltiples objetos suscriptores sobre eventos o cambios de estado sin acoplar las clases?",
+    "domain": "design_patterns",
+    "expected_concepts": [
+      "Observer",
+      "suscriptor"
+    ],
+    "target_tool": "document_get_context",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 1000
+    }
+  },
+  {
+    "id": "eval-06-decorator",
+    "query": "¿Cómo añadir responsabilidades o comportamiento dinámico a objetos individuales usando un envoltorio wrapper sin herencia?",
+    "domain": "design_patterns",
+    "expected_concepts": [
+      "Decorator",
+      "envoltorio"
+    ],
+    "target_tool": "document_get_context",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 1000
+    }
+  },
+  {
+    "id": "eval-07-solid-ocp",
+    "query": "Principio de abierto cerrado OCP en diseño de software orientado a objetos",
+    "domain": "software_principles",
+    "expected_concepts": [
+      "abierto",
+      "cerrado"
+    ],
+    "target_tool": "document_get_evidence",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 800
+    }
   }
 ]
