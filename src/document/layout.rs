@@ -351,15 +351,11 @@ pub fn extract_positioned_fragments(
                                 let part = decode_bytes_with_encoding(bytes, enc);
                                 combined_text.push_str(&part);
                             }
-                            Object::Integer(i) if *i < -100 => {
-                                if !combined_text.ends_with(' ') {
-                                    combined_text.push(' ');
-                                }
+                            Object::Integer(i) if *i < -100 && !combined_text.ends_with(' ') => {
+                                combined_text.push(' ');
                             }
-                            Object::Real(r) if *r < -100.0 => {
-                                if !combined_text.ends_with(' ') {
-                                    combined_text.push(' ');
-                                }
+                            Object::Real(r) if *r < -100.0 && !combined_text.ends_with(' ') => {
+                                combined_text.push(' ');
                             }
                             _ => {}
                         }

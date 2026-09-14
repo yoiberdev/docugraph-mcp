@@ -158,9 +158,8 @@ fn traverse_name_tree(
         };
 
         if let Some(arr) = names_arr {
-            for chunk in arr.chunks_exact(2) {
-                let name_hint = object_to_string(&chunk[0]);
-                let filespec_obj = &chunk[1];
+            for [name_obj, filespec_obj] in arr.as_chunks::<2>().0 {
+                let name_hint = object_to_string(name_obj);
                 if let Some(att) =
                     parse_filespec(doc, filespec_obj, name_hint, None, seen_stream_ids)
                 {
