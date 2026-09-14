@@ -72,16 +72,14 @@ fn test_slugify_title() {
 #[test]
 fn test_infer_sections_hierarchy() {
     let pages = vec![
-        Page {
-            page_number: 1,
-            text: "Chapter 1: Getting Started\nThis is introductory body text.\n## 1.1 Architecture\nDetails about architecture.".to_string(),
-            char_count: 90,
-        },
-        Page {
-            page_number: 2,
-            text: "### 1.1.1 Subsystem Design\nDeep dive into subsystem.\n## 1.2 Summary\nConclusion of chapter.".to_string(),
-            char_count: 80,
-        },
+        Page::new(
+            1,
+            "Chapter 1: Getting Started\nThis is introductory body text.\n## 1.1 Architecture\nDetails about architecture.",
+        ),
+        Page::new(
+            2,
+            "### 1.1.1 Subsystem Design\nDeep dive into subsystem.\n## 1.2 Summary\nConclusion of chapter.",
+        ),
     ];
 
     let sections = infer_sections_from_pages(&pages);

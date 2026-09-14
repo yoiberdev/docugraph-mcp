@@ -15,23 +15,22 @@ fn create_test_server() -> DocuGraphServer {
         file_size_bytes: 2048,
         content_hash: "hashgit123".to_string(),
         indexed_at: "2026-09-13T12:00:00Z".to_string(),
+        is_encrypted: false,
+        untrusted_text_detected: false,
     });
 
-    doc.add_page(Page {
-        page_number: 1,
-        text: "Capítulo 1: Introducción a Git y Control de Versiones.".to_string(),
-        char_count: 50,
-    });
-    doc.add_page(Page {
-        page_number: 2,
-        text: "1.1 Ramas Locales y Comandos Básicos.\nEl comando git branch permite crear, listar y eliminar ramas locales de trabajo.".to_string(),
-        char_count: 100,
-    });
-    doc.add_page(Page {
-        page_number: 3,
-        text: "1.2 Fusión y Resolución de Conflictos.\nCuando dos ramas modifican las mismas líneas de un archivo ocurre un conflicto.".to_string(),
-        char_count: 110,
-    });
+    doc.add_page(Page::new(
+        1,
+        "Capítulo 1: Introducción a Git y Control de Versiones.",
+    ));
+    doc.add_page(Page::new(
+        2,
+        "1.1 Ramas Locales y Comandos Básicos.\nEl comando git branch permite crear, listar y eliminar ramas locales de trabajo.",
+    ));
+    doc.add_page(Page::new(
+        3,
+        "1.2 Fusión y Resolución de Conflictos.\nCuando dos ramas modifican las mismas líneas de un archivo ocurre un conflicto.",
+    ));
 
     let mut ch1 = SectionNode::new("cap-1", "Capítulo 1: Introducción", 1, 1, 3, None);
     let sec1 = SectionNode::new(

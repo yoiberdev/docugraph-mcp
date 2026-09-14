@@ -115,6 +115,8 @@ pub struct DocumentSummary {
     pub total_sections: u32,
     pub content_hash: String,
     pub indexed_at: String,
+    pub is_encrypted: bool,
+    pub untrusted_text_detected: bool,
 }
 
 /// Detailed structural outline returned by `document_info`.
@@ -126,6 +128,8 @@ pub struct DocumentInfoResult {
     pub total_sections: u32,
     pub content_hash: String,
     pub sections_preview: Vec<String>,
+    pub is_encrypted: bool,
+    pub untrusted_text_detected: bool,
 }
 
 /// Outline node returned by `document_outline`.

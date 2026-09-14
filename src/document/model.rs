@@ -47,6 +47,8 @@ pub struct DocumentMetadata {
     pub file_size_bytes: u64,
     pub content_hash: String,
     pub indexed_at: String,
+    pub is_encrypted: bool,
+    pub untrusted_text_detected: bool,
 }
 
 /// A single extracted page from a document.
@@ -58,6 +60,22 @@ pub struct Page {
     pub text: String,
     /// Number of characters extracted
     pub char_count: usize,
+    /// Whether suspicious invisible or microscopic text was detected on this page
+    pub untrusted_text_detected: bool,
+}
+
+impl Page {
+    /// Helper to construct a clean page without untrusted text flags.
+    pub fn new(page_number: u32, text: impl Into<String>) -> Self {
+        let text = text.into();
+        let char_count = text.chars().count();
+        Self {
+            page_number,
+            char_count,
+            text,
+            untrusted_text_detected: false,
+        }
+    }
 }
 
 /// A node in the hierarchical document outline / graph.

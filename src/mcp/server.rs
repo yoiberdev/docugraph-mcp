@@ -120,6 +120,8 @@ impl DocuGraphServer {
                 total_sections: m.total_sections,
                 content_hash: m.content_hash,
                 indexed_at: m.indexed_at,
+                is_encrypted: m.is_encrypted,
+                untrusted_text_detected: m.untrusted_text_detected,
             })
             .collect();
         serde_json::to_string_pretty(&list).unwrap_or_else(|_| "[]".to_string())
@@ -154,6 +156,8 @@ impl DocuGraphServer {
                 total_sections: doc.total_sections() as u32,
                 content_hash: doc.metadata.content_hash.clone(),
                 sections_preview: preview,
+                is_encrypted: doc.metadata.is_encrypted,
+                untrusted_text_detected: doc.metadata.untrusted_text_detected,
             };
             serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
         } else {
@@ -167,6 +171,8 @@ impl DocuGraphServer {
                     "Document not found. Use 'document_list' to view available documents."
                         .to_string(),
                 ],
+                is_encrypted: false,
+                untrusted_text_detected: false,
             })
             .unwrap_or_else(|_| "{}".to_string())
         }
@@ -336,7 +342,11 @@ impl DocuGraphServer {
             let mut chars_count = 0;
             for p in params.0.page_start..=params.0.page_end {
                 if let Some(page) = doc.get_page(p) {
-                    let page_header = format!("--- Página {} ---\n", p);
+                    let page_header = if page.untrusted_text_detected {
+                        format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
+                    } else {
+                        format!("--- Página {} ---\n", p)
+                    };
                     if chars_count + page_header.len() + page.text.len() > max_chars {
                         let remaining = max_chars.saturating_sub(chars_count + page_header.len());
                         out.push_str(&page_header);

@@ -46,6 +46,8 @@ async fn test_document_list_tool() {
         file_size_bytes: 100,
         content_hash: "hash123".to_string(),
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
+        is_encrypted: false,
+        untrusted_text_detected: false,
     });
     server.register_document(doc).await;
 
@@ -74,6 +76,8 @@ async fn test_document_info_tool() {
         file_size_bytes: 500,
         content_hash: "hash_gof".to_string(),
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
+        is_encrypted: false,
+        untrusted_text_detected: false,
     });
     server.register_document(doc).await;
 

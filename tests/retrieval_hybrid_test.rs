@@ -15,35 +15,33 @@ fn create_sample_design_pattern_doc() -> Document {
         file_size_bytes: 4096,
         content_hash: "abcd1234deadbeef".to_string(),
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
+        is_encrypted: false,
+        untrusted_text_detected: false,
     });
 
     // Page 1: Overview
-    doc.add_page(Page {
-        page_number: 1,
-        text: "Chapter 5: Behavioral Patterns. Algorithms and assignment of responsibilities between objects.".to_string(),
-        char_count: 90,
-    });
+    doc.add_page(Page::new(
+        1,
+        "Chapter 5: Behavioral Patterns. Algorithms and assignment of responsibilities between objects.",
+    ));
 
     // Page 2: Strategy Pattern
-    doc.add_page(Page {
-        page_number: 2,
-        text: "Strategy Pattern\n\nIntent\nDefine a family of algorithms, encapsulate each one, and make them interchangeable.\n\nMotivation\nMany algorithms exist for breaking a stream of text into lines.".to_string(),
-        char_count: 180,
-    });
+    doc.add_page(Page::new(
+        2,
+        "Strategy Pattern\n\nIntent\nDefine a family of algorithms, encapsulate each one, and make them interchangeable.\n\nMotivation\nMany algorithms exist for breaking a stream of text into lines.",
+    ));
 
     // Page 3: Strategy Details
-    doc.add_page(Page {
-        page_number: 3,
-        text: "Applicability\nUse Strategy when many related classes differ only in their behavior.\n\nParticipants\n- Strategy: declares an interface common to all supported algorithms.\n- ConcreteStrategy: implements the algorithm.\n- Context: is configured with a ConcreteStrategy object.\n\nConsequences\n1. Families of related algorithms.\n2. An alternative to subclassing.\n3. Eliminates conditional statements.".to_string(),
-        char_count: 360,
-    });
+    doc.add_page(Page::new(
+        3,
+        "Applicability\nUse Strategy when many related classes differ only in their behavior.\n\nParticipants\n- Strategy: declares an interface common to all supported algorithms.\n- ConcreteStrategy: implements the algorithm.\n- Context: is configured with a ConcreteStrategy object.\n\nConsequences\n1. Families of related algorithms.\n2. An alternative to subclassing.\n3. Eliminates conditional statements.",
+    ));
 
     // Page 4: State Pattern
-    doc.add_page(Page {
-        page_number: 4,
-        text: "State Pattern\n\nIntent\nAllow an object to alter its behavior when its internal state changes. The object will appear to change its class.\n\nConsequences\n1. It localizes state-specific behavior and partitions behavior for different states.".to_string(),
-        char_count: 240,
-    });
+    doc.add_page(Page::new(
+        4,
+        "State Pattern\n\nIntent\nAllow an object to alter its behavior when its internal state changes. The object will appear to change its class.\n\nConsequences\n1. It localizes state-specific behavior and partitions behavior for different states.",
+    ));
 
     // Sections
     let mut strategy_sec = SectionNode::new(
@@ -105,13 +103,14 @@ fn test_bm25_utf8_spanish_characters() {
         file_size_bytes: 1024,
         content_hash: "1234utf8".to_string(),
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
+        is_encrypted: false,
+        untrusted_text_detected: false,
     });
 
-    doc.add_page(Page {
-        page_number: 1,
-        text: "¿Cómo funciona la sincronización en Git? El árbol de confirmaciones añade ramas para el diseño ágil y estructurado con un ñandú.".to_string(),
-        char_count: 120,
-    });
+    doc.add_page(Page::new(
+        1,
+        "¿Cómo funciona la sincronización en Git? El árbol de confirmaciones añade ramas para el diseño ágil y estructurado con un ñandú.",
+    ));
     doc.sections
         .push(SectionNode::new("sec-1", "Sincronización", 1, 1, 1, None));
 

@@ -24,8 +24,11 @@ enum Commands {
     Serve,
     /// Index a PDF document into the knowledge graph
     Index {
-        /// Path to the PDF file to ingest
+        /// Path to the PDF file or directory to ingest
         path: String,
+        /// Optional password for encrypted or password-protected PDFs
+        #[arg(short, long)]
+        password: Option<String>,
     },
     /// List all currently indexed documents in cache
     List,
@@ -33,6 +36,9 @@ enum Commands {
     Info {
         /// Document identifier or filesystem path to PDF
         document: String,
+        /// Optional password for encrypted PDF if loading from file path
+        #[arg(short, long)]
+        password: Option<String>,
     },
     /// Search across indexed documents using hybrid retrieval
     Search {
@@ -66,8 +72,9 @@ async fn main() -> anyhow::Result<()> {
             let service = server.serve(rmcp::transport::stdio()).await?;
             service.waiting().await?;
         }
-        Commands::Index { path } => {
+        Commands::Index { path, password } => {
             let p = std::path::Path::new(&path);
+            let pwd = password.as_deref();
             if p.is_dir() {
                 info!(target: "cli", dir = %path, "Indexing all PDF documents in directory");
                 let mut pdf_paths = Vec::new();
@@ -87,14 +94,22 @@ async fn main() -> anyhow::Result<()> {
                 let total_found = pdf_paths.len();
                 for pdf_path in pdf_paths {
                     eprint!("  - Indexing {}... ", pdf_path.display());
-                    match docugraph::document::load_pdf_from_path(&pdf_path) {
+                    match docugraph::document::load_pdf_from_path_with_password(&pdf_path, pwd) {
                         Ok(doc) => {
                             let total_p = doc.metadata.total_pages;
                             let total_s = doc.total_sections();
+                            let sec_flag = if doc.metadata.untrusted_text_detected {
+                                " [⚠️ UNTRUSTED TEXT]"
+                            } else {
+                                ""
+                            };
                             if let Err(e) = store.insert(doc) {
                                 eprintln!("failed to cache: {e}");
                             } else {
-                                eprintln!("OK ({} pages, {} sections)", total_p, total_s);
+                                eprintln!(
+                                    "OK ({} pages, {} sections{})",
+                                    total_p, total_s, sec_flag
+                                );
                                 indexed_count += 1;
                             }
                         }
@@ -109,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
                 );
             } else {
                 info!(target: "cli", path = %path, "Indexing PDF document");
-                let doc = docugraph::document::load_pdf_from_path(&path)?;
+                let doc = docugraph::document::load_pdf_from_path_with_password(&path, pwd)?;
                 store.insert(doc.clone())?;
 
                 eprintln!("\n📄 Document Ingested Successfully!");
@@ -122,6 +137,14 @@ async fn main() -> anyhow::Result<()> {
                 eprintln!("  Size:        {} bytes", doc.metadata.file_size_bytes);
                 eprintln!("  SHA-256:     {}", doc.metadata.content_hash);
                 eprintln!("  Sections:    {}", doc.total_sections());
+                if doc.metadata.is_encrypted {
+                    eprintln!("  Encrypted:   Yes (Successfully Decrypted)");
+                }
+                if doc.metadata.untrusted_text_detected {
+                    eprintln!("  Security:    ⚠️ Untrusted hidden or microscopic text detected!");
+                } else {
+                    eprintln!("  Security:    Clean (No hidden/microscopic text)");
+                }
                 eprintln!("\n🌳 Document Outline:");
                 print_outline_tree(&doc.sections, 0);
                 eprintln!();
@@ -135,26 +158,35 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 eprintln!("\n📚 Indexed Documents in Cache ({} total):", docs.len());
                 for (idx, doc) in docs.iter().enumerate() {
+                    let sec_status = if doc.untrusted_text_detected {
+                        " [⚠️ UNTRUSTED]"
+                    } else {
+                        ""
+                    };
                     eprintln!(
-                        "  [{}] {} (ID: '{}', {} pages, {} sections)",
+                        "  [{}] {} (ID: '{}', {} pages, {} sections{})",
                         idx + 1,
                         doc.title,
                         doc.id,
                         doc.total_pages,
-                        doc.total_sections
+                        doc.total_sections,
+                        sec_status
                     );
                 }
                 eprintln!();
             }
         }
-        Commands::Info { document } => {
+        Commands::Info { document, password } => {
             info!(target: "cli", document = %document, "Retrieving document info");
+            let pwd = password.as_deref();
             let doc = if let Some(d) = store.get(&document) {
                 Some(d)
             } else {
                 let path = std::path::Path::new(&document);
                 if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
-                    Some(docugraph::document::load_pdf_from_path(path)?)
+                    Some(docugraph::document::load_pdf_from_path_with_password(
+                        path, pwd,
+                    )?)
                 } else {
                     None
                 }
@@ -162,10 +194,26 @@ async fn main() -> anyhow::Result<()> {
 
             if let Some(doc) = doc {
                 eprintln!("\n📄 Document: {}", doc.metadata.title);
-                eprintln!("  ID:       {}", doc.id);
-                eprintln!("  Pages:    {}", doc.metadata.total_pages);
-                eprintln!("  Sections: {}", doc.total_sections());
-                eprintln!("  Hash:     {}", doc.metadata.content_hash);
+                eprintln!("  ID:        {}", doc.id);
+                eprintln!("  Pages:     {}", doc.metadata.total_pages);
+                eprintln!("  Sections:  {}", doc.total_sections());
+                eprintln!("  Hash:      {}", doc.metadata.content_hash);
+                eprintln!(
+                    "  Encrypted: {}",
+                    if doc.metadata.is_encrypted {
+                        "Yes"
+                    } else {
+                        "No"
+                    }
+                );
+                eprintln!(
+                    "  Security:  {}",
+                    if doc.metadata.untrusted_text_detected {
+                        "⚠️ Untrusted hidden or microscopic text detected!"
+                    } else {
+                        "Clean"
+                    }
+                );
                 eprintln!("\n🌳 Outline Preview:");
                 print_outline_tree(&doc.sections, 0);
             } else {
