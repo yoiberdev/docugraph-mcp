@@ -45,6 +45,61 @@ graph TD
 
 ---
 
+### 🧱 Hito 0: Núcleo Estable Fundacional (Foundation Bedrock & Baseline Validation)
+
+> **Estado:** ✅ **Completado y Certificado (Baseline)**
+> **Objetivo:** Establecer la arquitectura fundacional de DocuGraph MCP: ingestión de PDF nativa pura en Rust, grafo documental jerárquico (`Document`, `Page`, `SectionNode`), motor de recuperación híbrida (BM25 + embeddings deterministas), optimizador de presupuesto de contexto (`ContextBuilder`), suite universal de 10 herramientas MCP sobre protocolo `rmcp` 3.3.0 en stdio, persistencia en caché y CLI completa.
+
+#### Árbol de Tareas (WBS de Hito 0)
+```text
+Hito 0: Núcleo Estable Fundacional
+├── 0.1 Modelo de Datos del Grafo Documental
+│   ├── 0.1.1 DocumentMetadata (id, hash SHA-256, total_pages, total_sections)
+│   ├── 0.1.2 Page (número 1-indexed, contenido textual extraído, char_count)
+│   ├── 0.1.3 SectionNode (árbol jerárquico H1-H2-H3, slug único, page_start/end, parent_id, children, content_preview)
+│   └── 0.1.4 Provenance indisoluble (citas exactas [Doc: <id> p. <page> § <sec>])
+├── 0.2 Motor de Ingestión y Parser de PDFs
+│   ├── 0.2.1 Ingestión nativa en Rust puro mediante lopdf sin dependencias C++ externas
+│   ├── 0.2.2 Decodificación de marcadores nativos (/Outlines) con UTF-16BE / UTF-8
+│   ├── 0.2.3 Heurísticas tipográficas de respaldo para PDFs sin marcadores (detección decimal, capítulos, mayúsculas)
+│   └── 0.2.4 Reconciliación de páginas físicas y pre-cálculo de vistas previas de contenido
+├── 0.3 Capa de Persistencia y Caché
+│   ├── 0.3.1 DiskCache indexada por hash SHA-256 en .docugraph_cache/
+│   └── 0.3.2 DocumentStore concurrente en memoria respaldado por disco (Arc<RwLock>)
+├── 0.4 Motor de Búsqueda Híbrida y Presupuesto de Contexto
+│   ├── 0.4.1 Okapi BM25 puro en memoria (k1=1.2, b=0.75) con tokenizador bilingüe y filtrado de stop-words
+│   ├── 0.4.2 Slicing seguro por caracteres UTF-8 en extract_snippet (tolerante a caracteres multibyte ¿, á, ñ)
+│   ├── 0.4.3 Provider determinista offline de embeddings por subpalabras (n-gramas) y similitud de coseno
+│   ├── 0.4.4 HybridRetriever calibrable (Score = w_bm25 * S_bm25 + w_sem * S_sem + w_struct * S_struct)
+│   ├── 0.4.5 ContextBudgeter con estimación de tokens (~3.8 chars/tok) y compactación
+│   └── 0.4.6 Expansor de contexto conceptual universal (document_get_context)
+├── 0.5 Protocolo MCP Universal (stdio JSON-RPC)
+│   ├── 0.5.1 Suite de 10 herramientas 100% agnósticas al dominio (document_*)
+│   ├── 0.5.2 Aislamiento estricto de canales: stdout 100% limpio para JSON-RPC, logs a stderr con tracing
+│   └── 0.5.3 Desacoplamiento total de adaptadores de dominio específicos
+├── 0.6 CLI Ergonómica y Multidocumento
+│   ├── 0.6.1 Comandos: serve, list, info, search
+│   └── 0.6.2 Ingestión recursiva de directorios completos (docugraph index <dir>)
+└── 0.7 Verificación de Calidad y Suite de Pruebas
+    ├── 0.7.1 22 tests automatizados (unitarios, de integración y protocolo MCP)
+    ├── 0.7.2 Formato estricto cargo fmt y cero advertencias cargo clippy
+    └── 0.7.3 Pipeline de CI en GitHub Actions con workflow validado
+```
+
+* **Patrones GoF Aplicados:**
+  - **Composite:** `Document` y `SectionNode` organizan las secciones y subsecciones como un árbol jerárquico navegable con `children` y `parent_id`.
+  - **Strategy:** `HybridRetriever` combina ponderadamente estrategias ortogonales (`Bm25Index` y `EmbeddingProvider`).
+  - **Builder:** `ContextBuilder` ensambla fragmentos, citas y presupuesto de tokens sin exponer detalles de construcción interna.
+  - **Template Method:** El ciclo de parseo en `parser.rs` define la secuencia obligatoria: lectura de streams $\rightarrow$ extracción de marcadores $\rightarrow$ inferencia de respaldo $\rightarrow$ reconciliación de páginas.
+* **Filosofía SpaceX:**
+  - *Paso 1 (Cuestionar):* Demostró que no se necesita PyTorch ni SQLite pesado para indexar y buscar en PDFs técnicos en local.
+  - *Paso 2 (Eliminar):* Eliminó el chunking ciego por ventana fija y la dependencia de runtime Python.
+  - *Paso 3 (Simplificar/Optimizar):* Okapi BM25 determinista en RAM con latencia $<1\text{ ms}$ y cold start $<15\text{ ms}$.
+  - *Paso 4 (Acelerar):* 22 tests ejecutados en $\sim 3.4\text{ segundos}$.
+  - *Paso 5 (Automatizar):* Caché por hash SHA-256 que evita reprocesar documentos ya indexados.
+
+---
+
 ### 🛡️ Hito 1: Ingestión Resiliente y Seguridad en Streams (PDF Decryption & Anti-Prompt Injection)
 
 > **Debilidades que resuelve:**
