@@ -115,6 +115,8 @@ DocuGraph expone una suite de herramientas diseñada para el descubrimiento prog
 | `document_get_evidence` | `query`, `document_id`, `max_tokens`, `max_items` | Fragmentos compactos de evidencia con citas estrictas `[Doc: ... p. ... § ...]` para razonamiento factual. |
 | `document_read_pages` | `document_id`, `page_start`, `page_end`, `max_chars` | Lectura directa de rango de páginas con presupuesto de caracteres. |
 
+**Errores y límites.** Si el documento, la sección, la página o el adjunto no existen, la herramienta responde con `isError: true` y un texto que dice qué hay disponible (por ejemplo, los `document_id` indexados). En las búsquedas, un `document_id` que no existe también es un error; sin `document_id` se busca en todos los documentos. El servidor acota los tamaños: `limit` hasta 50, `max_tokens` hasta 16000, `max_chunks` y `max_items` hasta 20, `max_chars` hasta 64000 y `max_bytes` hasta 1 MiB. En `document_read_pages`, `page_end` se ajusta a la última página, y un rango invertido o que empieza después del final es un error.
+
 ---
 
 ## 🤖 Ejemplo de Razonamiento del Agente
@@ -152,6 +154,8 @@ Evidencia: [Doc: manual-git p. 37 § ramas-locales]"
 
 DocuGraph se comunica mediante **stdio (JSON-RPC 2.0)** manteniendo `stdout` estrictamente limpio (los logs estructurados se emiten exclusivamente a `stderr`).
 
+> **Carpeta de la caché.** `docugraph index` y `docugraph serve` leen los documentos de `DOCUGRAPH_CACHE_DIR`. Si no está definida, usan `.docugraph_cache` relativa al directorio de trabajo, y los clientes MCP suelen arrancar el servidor desde la carpeta del proyecto, así que no verá lo que se indexó en otro sitio. Usa la misma ruta absoluta para indexar y para servir. Al arrancar, `serve` avisa por `stderr` si la ruta es relativa o la caché está vacía, y `document_list` dice en qué carpeta buscó.
+
 ### Antigravity IDE
 Agrega la configuración en tu archivo `mcp_config.json`:
 
@@ -162,7 +166,8 @@ Agrega la configuración en tu archivo `mcp_config.json`:
       "command": "cargo",
       "args": ["run", "--manifest-path", "C:/proyectos/docugraph-mcp/Cargo.toml", "--release", "--quiet", "--", "serve"],
       "env": {
-        "RUST_LOG": "info"
+        "RUST_LOG": "info",
+        "DOCUGRAPH_CACHE_DIR": "C:/Users/tu-usuario/.docugraph_cache"
       }
     }
   }
@@ -175,7 +180,10 @@ Agrega la configuración en tu archivo `mcp_config.json`:
   "mcpServers": {
     "docugraph": {
       "command": "C:/proyectos/docugraph-mcp/target/release/docugraph.exe",
-      "args": ["serve"]
+      "args": ["serve"],
+      "env": {
+        "DOCUGRAPH_CACHE_DIR": "C:/Users/tu-usuario/.docugraph_cache"
+      }
     }
   }
 }
