@@ -28,6 +28,7 @@ graph TD
     M5["[Hito 5: Renderizado Multimodal de Páginas]<br/>Inspección Visual de Diagramas para Vision LLMs"]:::advanced
     M6["[Hito 6: Benchmark de Contexto y CI/CD Automatizado]<br/>Métricas Precision/Recall vs Tokens & Quality Gates"]:::advanced
     M7["[Hito 7: Extractor de Outlines Nativos & Links]<br/>Navegación /Outlines & Hipervínculos /Annots"]:::advanced
+    M8["[Hito 8: Formularios Interactivos y Tagged PDF]<br/>AcroForms, /Kids, Jerarquía & /StructTreeRoot"]:::advanced
 
     M0 --> M1
     M0 --> M2
@@ -38,6 +39,7 @@ graph TD
     M4 --> M6
     M5 --> M6
     M6 --> M7
+    M7 --> M8
 ```
 
 ---
