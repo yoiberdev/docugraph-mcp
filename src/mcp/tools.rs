@@ -106,26 +106,6 @@ pub struct DocumentReadPagesParams {
     pub max_chars: Option<usize>,
 }
 
-/// Parameters for `pattern_get`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PatternGetParams {
-    /// Name of the design pattern (e.g. 'Strategy', 'Factory Method')
-    pub pattern_name: String,
-    /// Optional document identifier filter
-    pub document_id: Option<String>,
-}
-
-/// Parameters for `pattern_compare`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PatternCompareParams {
-    /// First pattern name (e.g. 'Strategy')
-    pub pattern_a: String,
-    /// Second pattern name (e.g. 'State')
-    pub pattern_b: String,
-    /// Optional document identifier filter
-    pub document_id: Option<String>,
-}
-
 /// Document summary item returned by `document_list`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DocumentSummary {

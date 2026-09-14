@@ -161,3 +161,19 @@ async fn test_mcp_document_read_pages() {
     assert!(pages_md.contains("Página 3"));
     assert!(pages_md.contains("git branch"));
 }
+
+#[tokio::test]
+async fn test_mcp_document_get_context() {
+    let server = create_test_server();
+    let context_md = server
+        .document_get_context(Parameters(DocumentGetContextParams {
+            query: "ramas locales de trabajo".to_string(),
+            document_id: Some("git-guide".to_string()),
+            max_tokens: Some(600),
+            max_chunks: Some(2),
+        }))
+        .await;
+
+    assert!(context_md.contains("Contexto Conceptual"));
+    assert!(context_md.contains("1.1 Ramas Locales") || context_md.contains("git branch"));
+}

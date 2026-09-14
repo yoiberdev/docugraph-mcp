@@ -50,8 +50,8 @@ flowchart TD
     end
     
     ContextBudget --> MCPServer[DocuGraph MCP Server - stdio]
-    DesignPatterns --> MCPServer
-    MCPServer --> Clients[Antigravity IDE / Claude Code / Trae / Kiro]
+    EvidenceEngine[Provenance & Evidence Builder] --> MCPServer
+    MCPServer --> Clients[Antigravity IDE / Claude Code / Trae / Kiro / Codex]
 ```
 
 ---
@@ -77,8 +77,9 @@ El binario autocontenido quedará disponible en `./target/release/docugraph` (o 
 DocuGraph incluye una interfaz de línea de comandos intuitiva para preparar y explorar documentos antes o durante el trabajo con agentes:
 
 ```bash
-# 1. Indexar un documento PDF en el grafo (con persistencia en caché)
+# 1. Indexar un documento PDF (o carpeta completa recursivamente) en el grafo
 docugraph index ./ruta/documento.pdf
+docugraph index ./manuales/
 
 # 2. Listar todos los documentos indexados en caché
 docugraph list
@@ -89,15 +90,15 @@ docugraph info <document_id_o_ruta>
 # 4. Realizar búsqueda híbrida directa desde consola
 docugraph search "trunk based development" --limit 5
 
-# 5. Iniciar servidor MCP en modo stdio (comunicación JSON-RPC)
+# 5. Iniciar servidor MCP en modo stdio (comunicación JSON-RPC universal)
 docugraph serve
 ```
 
 ---
 
-## 🛠️ Herramientas MCP Disponibles
+## 🛠️ Herramientas MCP Disponibles (100% Agnósticas al Dominio)
 
-DocuGraph expone una suite de herramientas diseñada para el descubrimiento progresivo de información por parte del agente:
+DocuGraph expone una suite de herramientas diseñada para el descubrimiento progresivo de cualquier tipo de documento técnico, científico o profesional:
 
 | Herramienta | Parámetros principales | Descripción |
 | ----------- | ---------------------- | ----------- |
@@ -108,10 +109,9 @@ DocuGraph expone una suite de herramientas diseñada para el descubrimiento prog
 | `document_search` | `query`, `document_id`, `limit` | Búsqueda léxica rápida mediante Okapi BM25. |
 | `document_search_hybrid` | `query`, `document_id`, `limit`, `bm25_weight`, `semantic_weight`, `structural_weight` | Búsqueda híbrida ponderada (palabras clave + semántica + títulos). |
 | `document_get_section` | `document_id`, `section_id`, `include_parent`, `max_tokens` | Recupera el texto de una sección con contexto de padre y límite de tokens. |
-| `document_get_evidence` | `query`, `document_id`, `max_tokens`, `max_items` | Fragmentos compactos de evidencia con citas estrictas para razonamiento. |
+| `document_get_context` | `query`, `document_id`, `max_tokens`, `max_chunks` | Expande el contexto circundante (sección padre, hermanos y sub-cláusulas) para un concepto dentro de un presupuesto estricto. |
+| `document_get_evidence` | `query`, `document_id`, `max_tokens`, `max_items` | Fragmentos compactos de evidencia con citas estrictas `[Doc: ... p. ... § ...]` para razonamiento factual. |
 | `document_read_pages` | `document_id`, `page_start`, `page_end`, `max_chars` | Lectura directa de rango de páginas con presupuesto de caracteres. |
-| `pattern_get` | `pattern_name`, `document_id` | Extrae dinámicamente Intent, Motivation, Participants, Consequences y código de ejemplo. |
-| `pattern_compare` | `pattern_a`, `pattern_b`, `document_id` | Compara dos patrones cara a cara a partir del texto del libro. |
 
 ---
 

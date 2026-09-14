@@ -10,7 +10,6 @@ use tracing::info;
 
 use super::tools::*;
 use crate::document::model::{Document, SectionNode};
-use crate::knowledge::design_patterns::DesignPatternsAdapter;
 use crate::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, HybridWeights};
 use crate::storage::{DiskCache, DocumentStore};
 
@@ -265,6 +264,32 @@ impl DocuGraphServer {
         }
     }
 
+    /// Retrieve broader surrounding conceptual context for a topic or query across the document graph.
+    #[tool(
+        name = "document_get_context",
+        description = "Retrieve surrounding conceptual context (parent headings, sub-clauses, and related paragraphs) for a query or topic within a token budget."
+    )]
+    pub async fn document_get_context(
+        &self,
+        params: Parameters<DocumentGetContextParams>,
+    ) -> String {
+        let query = &params.0.query;
+        let docs = self.get_documents(params.0.document_id.as_deref());
+        if docs.is_empty() {
+            return "No documents available for context expansion.".to_string();
+        }
+
+        let budget = ContextBudget {
+            max_tokens: params.0.max_tokens.unwrap_or(1500),
+            max_chunks: params.0.max_chunks.unwrap_or(5),
+            compact: true,
+        };
+
+        let retriever = HybridRetriever::build(&docs, None, None);
+        let hits = retriever.search(query, budget.max_chunks * 2);
+        ContextBuilder::build_conceptual_context(query, &hits, &docs, budget)
+    }
+
     /// Retrieve compact evidence snippets with guaranteed citation provenance for LLM reasoning.
     #[tool(
         name = "document_get_evidence",
@@ -329,52 +354,6 @@ impl DocuGraphServer {
         } else {
             format!("Error: Document '{doc_id}' not found.")
         }
-    }
-
-    /// Retrieve a design pattern (Intent, Motivation, Structure, Participants, Consequences) dynamically from the document.
-    #[tool(
-        name = "pattern_get",
-        description = "Dynamically extract Design Pattern components (Intent, Motivation, Participants, Consequences, Sample Code) from the indexed literature."
-    )]
-    pub async fn pattern_get(&self, params: Parameters<PatternGetParams>) -> String {
-        let docs = self.get_documents(params.0.document_id.as_deref());
-        for doc in &docs {
-            if let Some(pattern) = DesignPatternsAdapter::get_pattern(doc, &params.0.pattern_name) {
-                return serde_json::to_string_pretty(&pattern).unwrap_or_else(|_| "{}".to_string());
-            }
-        }
-        format!(
-            "Pattern '{}' not found in available documents.",
-            params.0.pattern_name
-        )
-    }
-
-    /// Compare two design patterns dynamically using extracted evidence from the document.
-    #[tool(
-        name = "pattern_compare",
-        description = "Compare two design patterns side-by-side based on their extracted intents, applicability, and consequences."
-    )]
-    pub async fn pattern_compare(&self, params: Parameters<PatternCompareParams>) -> String {
-        let docs = self.get_documents(params.0.document_id.as_deref());
-        for doc in &docs {
-            if let Some((a, b)) = DesignPatternsAdapter::compare_patterns(
-                doc,
-                &params.0.pattern_a,
-                &params.0.pattern_b,
-            ) {
-                let comparison = serde_json::json!({
-                    "pattern_a": a,
-                    "pattern_b": b,
-                    "summary": format!("Comparison of {} vs {} from '{}'", a.name, b.name, doc.metadata.title)
-                });
-                return serde_json::to_string_pretty(&comparison)
-                    .unwrap_or_else(|_| "{}".to_string());
-            }
-        }
-        format!(
-            "Could not find both '{}' and '{}' for comparison.",
-            params.0.pattern_a, params.0.pattern_b
-        )
     }
 }
 

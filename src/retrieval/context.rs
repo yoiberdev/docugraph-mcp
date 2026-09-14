@@ -207,6 +207,72 @@ impl ContextBuilder {
 
         Some(out)
     }
+
+    /// Retrieve broader surrounding conceptual context for a query across documents.
+    pub fn build_conceptual_context(
+        query: &str,
+        hits: &[HybridSearchHit],
+        docs: &[Document],
+        budget: ContextBudget,
+    ) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "### Contexto Conceptual para: '{}' (Presupuesto: ~{} tokens)\n\n",
+            query, budget.max_tokens
+        ));
+
+        let mut accumulated_tokens = estimate_tokens(&out);
+        let mut included_sections = std::collections::HashSet::new();
+
+        for hit in hits.iter().take(budget.max_chunks) {
+            if accumulated_tokens >= budget.max_tokens {
+                out.push_str("\n*(Límite de presupuesto de contexto alcanzado)*\n");
+                break;
+            }
+
+            let doc = match docs.iter().find(|d| d.id.0 == hit.document_id) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            if let Some(ref sec_id) = hit.section_id {
+                if !included_sections.insert((hit.document_id.clone(), sec_id.clone())) {
+                    continue;
+                }
+
+                let remaining_tokens = budget.max_tokens.saturating_sub(accumulated_tokens);
+                let section_budget = ContextBudget {
+                    max_tokens: remaining_tokens.min(600),
+                    max_chunks: 3,
+                    compact: budget.compact,
+                };
+
+                if let Some(section_text) =
+                    Self::expand_section_context(doc, sec_id, true, section_budget)
+                {
+                    let section_tokens = estimate_tokens(&section_text);
+                    out.push_str(&section_text);
+                    out.push_str("\n---\n\n");
+                    accumulated_tokens += section_tokens;
+                }
+            } else {
+                let snippet_clean = if budget.compact {
+                    compact_text(&hit.snippet)
+                } else {
+                    hit.snippet.clone()
+                };
+                let snippet_text = format!(
+                    "**[Doc: {} p. {}]** {}\n\n",
+                    hit.document_id, hit.page_start, snippet_clean
+                );
+                let snippet_tokens = estimate_tokens(&snippet_text);
+                out.push_str(&snippet_text);
+                accumulated_tokens += snippet_tokens;
+            }
+        }
+
+        out
+    }
 }
 
 /// Compact text by collapsing multiple newlines and consecutive whitespace.
