@@ -1,0 +1,49 @@
+[
+  {
+    "id": "eval-01",
+    "query": "What problem does the Strategy pattern solve?",
+    "domain": "design_patterns",
+    "expected_concepts": [
+      "family of algorithms",
+      "encapsulate",
+      "interchangeable",
+      "alternative to subclassing"
+    ],
+    "target_tool": "pattern_get",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 500
+    }
+  },
+  {
+    "id": "eval-02",
+    "query": "Compare Strategy and State patterns in terms of intent and consequences",
+    "domain": "design_patterns",
+    "expected_concepts": [
+      "behavior change",
+      "internal state",
+      "interchangeable algorithms"
+    ],
+    "target_tool": "pattern_compare",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 800
+    }
+  },
+  {
+    "id": "eval-03",
+    "query": "How to resolve merge conflicts in local branches?",
+    "domain": "git_workflow",
+    "expected_concepts": [
+      "conflict",
+      "branches",
+      "merge",
+      "staging"
+    ],
+    "target_tool": "document_get_evidence",
+    "evaluation_criteria": {
+      "requires_provenance": true,
+      "max_context_tokens": 600
+    }
+  }
+]
