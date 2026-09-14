@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tracing::debug;
 
@@ -29,6 +30,11 @@ impl DocumentStore {
         }
 
         store
+    }
+
+    /// Directory of the disk cache backing this store, if it has one.
+    pub fn cache_dir(&self) -> Option<&Path> {
+        self.disk.as_ref().map(DiskCache::cache_dir)
     }
 
     /// Insert or update a document in memory and optionally persist to disk cache.

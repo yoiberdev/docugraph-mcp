@@ -16,8 +16,12 @@ pub struct DiskCache {
 
 impl DiskCache {
     /// Create a new disk cache in the specified directory.
+    ///
+    /// A relative path is resolved against the current directory and stored as absolute, so
+    /// messages about the cache always name the real location.
     pub fn new(cache_dir: impl AsRef<Path>) -> Result<Self> {
-        let dir = cache_dir.as_ref().to_path_buf();
+        let dir = cache_dir.as_ref();
+        let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
         fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create cache directory at {:?}", dir))?;
         Ok(Self { cache_dir: dir })
@@ -28,6 +32,11 @@ impl DiskCache {
         std::env::var("DOCUGRAPH_CACHE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".docugraph_cache"))
+    }
+
+    /// Absolute directory holding the cached documents.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
     }
 
     /// Path to a cached document JSON file by SHA-256 hash.

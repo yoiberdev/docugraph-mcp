@@ -115,11 +115,16 @@ impl DocuGraphServer {
         if let Some(id) = doc_id {
             return self.require_document(id).map(|doc| vec![doc]);
         }
-        let metas = self.store.list_documents();
-        Ok(metas
+        let docs: Vec<Document> = self
+            .store
+            .list_documents()
             .into_iter()
             .filter_map(|m| self.store.get(&m.id))
-            .collect())
+            .collect();
+        if docs.is_empty() {
+            return Err(ToolError::new(self.no_documents_message()));
+        }
+        Ok(docs)
     }
 
     /// Fetch a document by id or content hash, or explain which ids exist.
@@ -139,7 +144,8 @@ impl DocuGraphServer {
             .collect();
         if ids.is_empty() {
             return ToolError::new(format!(
-                "Document '{doc_id}' not found: no documents are indexed."
+                "Document '{doc_id}' not found. {}",
+                self.no_documents_message()
             ));
         }
         ids.sort();
@@ -147,6 +153,47 @@ impl DocuGraphServer {
             "Document '{doc_id}' not found. Available document ids: {}.",
             quoted_list(&ids)
         ))
+    }
+
+    /// Explain where the server looked for documents and how to point it elsewhere.
+    fn no_documents_message(&self) -> String {
+        match self.store.cache_dir() {
+            Some(dir) => format!(
+                "No indexed documents found in cache directory '{}'. Index PDFs with `docugraph index <pdf>` and set DOCUGRAPH_CACHE_DIR to that same absolute directory for both `index` and `serve`.",
+                dir.display()
+            ),
+            None => "No indexed documents: this server has no cache directory and only holds documents registered in memory. Set DOCUGRAPH_CACHE_DIR to the absolute directory used by `docugraph index`.".to_string(),
+        }
+    }
+
+    /// Problems with the cache that `docugraph serve` reports on stderr before serving.
+    ///
+    /// `configured_dir` is the directory as configured (usually `DOCUGRAPH_CACHE_DIR`). A
+    /// relative path depends on the directory the MCP client starts the server in, which is
+    /// normally the project folder, and an empty cache makes every tool answer "no documents".
+    pub fn startup_warnings(&self, configured_dir: &Path) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if configured_dir.is_relative() {
+            let resolved = std::path::absolute(configured_dir)
+                .unwrap_or_else(|_| configured_dir.to_path_buf());
+            warnings.push(format!(
+                "cache directory '{}' is relative, so it depends on the directory the server is started from (now '{}'). Set DOCUGRAPH_CACHE_DIR to an absolute path.",
+                configured_dir.display(),
+                resolved.display()
+            ));
+        }
+        match self.store.cache_dir() {
+            None => warnings.push(format!(
+                "cache directory '{}' could not be opened; no indexed documents will be available.",
+                configured_dir.display()
+            )),
+            Some(dir) if self.store.list_documents().is_empty() => warnings.push(format!(
+                "no indexed documents in cache directory '{}'. Run `docugraph index <pdf>` with DOCUGRAPH_CACHE_DIR set to that directory.",
+                dir.display()
+            )),
+            Some(_) => {}
+        }
+        warnings
     }
 }
 
@@ -172,6 +219,9 @@ impl DocuGraphServer {
     )]
     pub async fn document_list(&self) -> String {
         let metas = self.store.list_documents();
+        if metas.is_empty() {
+            return self.no_documents_message();
+        }
         let list: Vec<DocumentSummary> = metas
             .into_iter()
             .map(|m| DocumentSummary {
@@ -265,10 +315,6 @@ impl DocuGraphServer {
     pub async fn document_search(&self, params: Parameters<DocumentSearchParams>) -> ToolResult {
         let limit = bounded(params.0.limit, 5, MAX_SEARCH_LIMIT);
         let docs = self.get_documents(params.0.document_id.as_deref())?;
-        if docs.is_empty() {
-            return Ok("No documents available for search.".to_string());
-        }
-
         let bm25 = crate::retrieval::Bm25Index::build_from_documents(&docs, None);
         let hits = bm25.search(&params.0.query, limit);
         Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
@@ -285,10 +331,6 @@ impl DocuGraphServer {
     ) -> ToolResult {
         let limit = bounded(params.0.limit, 5, MAX_SEARCH_LIMIT);
         let docs = self.get_documents(params.0.document_id.as_deref())?;
-        if docs.is_empty() {
-            return Ok("No documents available for search.".to_string());
-        }
-
         let weights = HybridWeights {
             bm25_weight: params.0.bm25_weight.unwrap_or(0.50),
             semantic_weight: params.0.semantic_weight.unwrap_or(0.30),
@@ -339,10 +381,6 @@ impl DocuGraphServer {
     ) -> ToolResult {
         let query = &params.0.query;
         let docs = self.get_documents(params.0.document_id.as_deref())?;
-        if docs.is_empty() {
-            return Ok("No documents available for context expansion.".to_string());
-        }
-
         let budget = ContextBudget {
             max_tokens: bounded(params.0.max_tokens, 1500, MAX_CONTEXT_TOKENS),
             max_chunks: bounded(params.0.max_chunks, 5, MAX_CONTEXT_CHUNKS),
@@ -367,10 +405,6 @@ impl DocuGraphServer {
     ) -> ToolResult {
         let query = &params.0.query;
         let docs = self.get_documents(params.0.document_id.as_deref())?;
-        if docs.is_empty() {
-            return Ok("No documents available for evidence collection.".to_string());
-        }
-
         let budget = ContextBudget {
             max_tokens: bounded(params.0.max_tokens, 1200, MAX_CONTEXT_TOKENS),
             max_chunks: bounded(params.0.max_items, 4, MAX_CONTEXT_CHUNKS),

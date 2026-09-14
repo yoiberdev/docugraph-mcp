@@ -1,9 +1,11 @@
 use docugraph::document::model::{Document, DocumentMetadata};
 use docugraph::mcp::{
     DocuGraphServer,
-    tools::{DocumentInfoParams, PingParams},
+    tools::{DocumentInfoParams, DocumentSearchParams, PingParams},
 };
+use docugraph::storage::DocumentStore;
 use rmcp::{ServerHandler, handler::server::wrapper::Parameters};
+use std::path::Path;
 use tempfile::{TempDir, tempdir};
 
 /// Server backed by a throwaway cache dir, so tests never write `.docugraph_cache` into the repo.
@@ -107,4 +109,61 @@ async fn test_document_info_tool() {
     assert_eq!(parsed["id"], "test_doc_gof");
     assert_eq!(parsed["title"], "GoF Design Patterns");
     assert!(parsed["sections_preview"].is_array());
+}
+
+#[tokio::test]
+async fn test_empty_cache_is_explained_with_its_absolute_path() {
+    let (server, cache) = server_with_temp_cache();
+    let cache_dir = std::path::absolute(cache.path()).expect("absolute cache path");
+
+    let message = server.document_list().await;
+    assert!(
+        message.contains(&cache_dir.display().to_string()),
+        "document_list should name the cache directory: {message}"
+    );
+    assert!(message.contains("DOCUGRAPH_CACHE_DIR"), "{message}");
+
+    let err = server
+        .document_search(Parameters(DocumentSearchParams {
+            query: "anything".to_string(),
+            document_id: None,
+            limit: None,
+        }))
+        .await
+        .expect_err("searching an empty cache is a tool error");
+    assert!(err.message().contains("DOCUGRAPH_CACHE_DIR"), "{err}");
+}
+
+#[tokio::test]
+async fn test_empty_in_memory_store_is_explained() {
+    let server = DocuGraphServer::with_store(DocumentStore::new(None));
+    let message = server.document_list().await;
+    assert!(message.contains("no cache directory"), "{message}");
+}
+
+#[tokio::test]
+async fn test_serve_startup_warnings() {
+    let (server, cache) = server_with_temp_cache();
+
+    let warnings = server.startup_warnings(cache.path());
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("no indexed documents"), "{warnings:?}");
+
+    // Only the configured path is inspected here; nothing is created in the working directory.
+    let warnings = server.startup_warnings(Path::new("relative-cache"));
+    assert!(
+        warnings.iter().any(|w| w.contains("is relative")),
+        "{warnings:?}"
+    );
+
+    server
+        .register_document(Document::new(DocumentMetadata {
+            id: "indexed-doc".to_string(),
+            title: "Indexed".to_string(),
+            total_pages: 1,
+            content_hash: "indexed-hash".to_string(),
+            ..Default::default()
+        }))
+        .await;
+    assert!(server.startup_warnings(cache.path()).is_empty());
 }

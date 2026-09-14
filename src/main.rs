@@ -132,14 +132,18 @@ async fn main() -> anyhow::Result<()> {
         .expect("setting default tracing subscriber failed");
 
     let cli = Cli::parse();
-    let cache = DiskCache::new(DiskCache::default_dir()).ok();
+    let cache_dir = DiskCache::default_dir();
+    let cache = DiskCache::new(&cache_dir).ok();
     let store = DocumentStore::new(cache);
 
     match cli.command {
         Commands::Serve => {
             info!("Starting DocuGraph MCP server on stdio transport...");
-            eprintln!("DocuGraph MCP ready to accept JSON-RPC on stdin");
             let server = docugraph::mcp::DocuGraphServer::with_store(store);
+            for warning in server.startup_warnings(&cache_dir) {
+                eprintln!("WARNING: {warning}");
+            }
+            eprintln!("DocuGraph MCP ready to accept JSON-RPC on stdin");
             let service = server.serve(rmcp::transport::stdio()).await?;
             service.waiting().await?;
         }
