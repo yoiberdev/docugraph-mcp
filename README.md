@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-2024%20Edition-orange.svg)](https://www.rust-lang.org/)
 [![MCP](https://img.shields.io/badge/Protocol-MCP%20stdio-blue.svg)](https://modelcontextprotocol.io/)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Apóyame-F16061?logo=ko-fi&logoColor=white)](https://ko-fi.com/yoiberdev)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Invítame%20un%20café-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/yoiber)
 
 **DocuGraph MCP** es un servidor [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) de alto rendimiento escrito en **Rust**, diseñado para transformar documentos PDF complejos (manuales técnicos, libros de arquitectura, especificaciones, RFCs) en un **grafo estructurado de conocimiento y evidencia** que los agentes de IA pueden consultar sin saturar su contexto con páginas innecesarias.
 
@@ -117,28 +119,31 @@ DocuGraph expone una suite de herramientas diseñada para el descubrimiento prog
 
 ## 🤖 Ejemplo de Razonamiento del Agente
 
-A diferencia de un bot que responde texto plano sin respaldo, un agente conectado a DocuGraph razona con evidencia verificable:
+A diferencia de un bot que responde texto plano sin respaldo, un agente conectado a DocuGraph razona con evidencia verificable sobre cualquier documento técnico:
 
 ```text
 Usuario:
-"Analiza este servicio de procesamiento de pagos y dime qué patrón de diseño debería usar según el libro."
+"Analiza este flujo de sincronización y recomiéndame la mejor estrategia según el manual técnico."
 
 Agente:
-"Voy a consultar la base de conocimiento de Design Patterns..."
+"Voy a consultar la base de conocimiento estructurada del documento..."
 
-→ Llama a: document_search_hybrid("interchangeable payment algorithms")
-← Recibe: Sección "Strategy" (pp. 315-320) y Sección "State" (pp. 305-310)
+→ Llama a: document_search_hybrid("estrategias de sincronización y ramas")
+← Recibe: Sección "1.1 Ramas Locales" (pp. 37-40, score: 0.88) y Sección "1.2 Fusión" (pp. 41-44)
 
-→ Llama a: pattern_compare("Strategy", "State")
-← Recibe: Comparativa de Intent y Consequences extraída del PDF
+→ Llama a: document_get_context(query: "estrategias de sincronización", document_id: "manual-git")
+← Recibe: Contexto conceptual circundante, encabezado padre y subsecciones relacionadas
+
+→ Llama a: document_get_evidence(query: "estrategia de ramas locales de integración continua")
+← Recibe: Fragmentos compactos de alta relevancia con citas formales
 
 Agente:
-"Te recomiendo utilizar el patrón Strategy.
-Según el libro de Design Patterns (pp. 315-316, § Strategy):
-- Intent: Define una familia de algoritmos, encapsula cada uno y los hace intercambiables.
-- Consecuencia: Elimina sentencias condicionales complejas (if/else o switch) al añadir nuevos procesadores de pago.
+"Te recomiendo utilizar una estrategia basada en ramas cortas (Trunk-Based Development).
+Según el documento técnico (pp. 37-38, § 1.1 Ramas Locales):
+- Permite reducir los conflictos de integración continua fusionando diariamente.
+- Evita el aislamiento de código prolongado entre desarrolladores.
 
-Evidencia: [Doc: design-patterns p. 315 § strategy.intent]"
+Evidencia: [Doc: manual-git p. 37 § ramas-locales]"
 ```
 
 ---
@@ -178,8 +183,29 @@ Agrega la configuración en tu archivo `mcp_config.json`:
 
 ---
 
+## ☕ Apoya el Proyecto / Sponsor & Support
+
+DocuGraph MCP es un proyecto open-source desarrollado de forma independiente con dedicación, cariño y rigor técnico para la comunidad de desarrolladores y agentes de IA.
+
+Si esta herramienta te resulta útil, te ahorra tiempo o mejora tus flujos de trabajo con LLMs, cualquier muestra de apoyo o café es recibida con **inmensa gratitud y humildad**. ¡Ayuda directamente a mantener el proyecto activo, optimizado y en constante evolución!
+
+<p align="center">
+  <a href="https://ko-fi.com/yoiberdev" target="_blank">
+    <img src="https://img.shields.io/badge/Ko--fi-Apóyame%20en%20Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Apóyame en Ko-fi" />
+  </a>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://buymeacoffee.com/yoiber" target="_blank">
+    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Invítame%20un%20café-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Invítame un café en Buy Me a Coffee" />
+  </a>
+</p>
+
+* **Ko-fi:** [ko-fi.com/yoiberdev](https://ko-fi.com/yoiberdev)
+* **Buy Me a Coffee:** [buymeacoffee.com/yoiber](https://buymeacoffee.com/yoiber)
+
+---
+
 ## ⚖️ Licencia y Uso de Documentos (Copyright Notice)
 
 * **DocuGraph MCP** se distribuye bajo la [Licencia MIT](LICENSE).
-* **Uso de documentos protegidos:** DocuGraph **NO** incluye ni redistribuye libros protegidos por derechos de autor (como *Design Patterns: Elements of Reusable Object-Oriented Software*). Cada usuario es responsable de proveer sus propios PDFs legítimos en su entorno local.
+* **Uso de documentos protegidos:** DocuGraph **NO** incluye ni redistribuye libros protegidos por derechos de autor. Cada usuario es responsable de proveer sus propios PDFs legítimos en su entorno local.
 * Para pruebas y CI, se utilizan suites sintéticas libres de derechos en `tests/` y `evaluation/`.
