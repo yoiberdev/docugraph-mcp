@@ -6,7 +6,7 @@
 //! without interleaved columns.
 
 use lopdf::content::Content;
-use lopdf::{Encoding, Object};
+use lopdf::{Dictionary, Encoding, Object};
 use std::collections::BTreeMap;
 use tracing::{debug, trace};
 
@@ -135,35 +135,268 @@ fn decode_bytes_with_encoding(bytes: &[u8], encoding: Option<&Encoding>) -> Stri
     }
 }
 
+/// Advance assumed for glyphs whose font has no width table (thousandths of an em).
+const FALLBACK_GLYPH_WIDTH: f32 = 520.0;
+
+/// A TJ adjustment more negative than this (thousandths of an em) is read as a word gap.
+const TJ_WORD_GAP_THOUSANDTHS: f32 = 100.0;
+
+/// Horizontal gap between two fragments on the same baseline, as a fraction of the
+/// font size, from which a word space is inserted between them.
+const WORD_GAP_EM: f32 = 0.15;
+
+/// Width entries of a CID font `/W` array.
+#[derive(Debug, Clone)]
+enum CidWidths {
+    /// `c [w1 w2 ...]`: consecutive CIDs starting at `c`
+    List(u32, Vec<f32>),
+    /// `c_first c_last w`: every CID in the range shares one width
+    Range(u32, u32, f32),
+}
+
+/// Glyph advance widths of a font resource, used to place text fragments precisely.
+#[derive(Debug, Clone)]
+struct FontMetrics {
+    /// Bytes per character code: 2 for Type0 (CID) fonts, 1 for simple fonts
+    code_len: usize,
+    first_char: u32,
+    widths: Vec<f32>,
+    cid_widths: Vec<CidWidths>,
+    default_width: Option<f32>,
+    /// Glyph space to text space factor (1/1000, or the FontMatrix of Type3 fonts)
+    scale: f32,
+}
+
+impl FontMetrics {
+    fn from_font(doc: &lopdf::Document, font: &Dictionary) -> Self {
+        let number = |obj: &Object| {
+            doc.dereference(obj)
+                .ok()
+                .and_then(|(_, o)| o.as_float().ok())
+        };
+        let mut metrics = FontMetrics {
+            code_len: 1,
+            first_char: 0,
+            widths: Vec::new(),
+            cid_widths: Vec::new(),
+            default_width: None,
+            scale: 0.001,
+        };
+        let subtype = font
+            .get(b"Subtype")
+            .and_then(|o| o.as_name())
+            .unwrap_or_default();
+
+        if subtype == b"Type0" {
+            metrics.code_len = 2;
+            let cid_font = font
+                .get_deref(b"DescendantFonts", doc)
+                .and_then(|o| o.as_array())
+                .ok()
+                .and_then(|fonts| fonts.first())
+                .and_then(|o| doc.dereference(o).ok())
+                .and_then(|(_, o)| o.as_dict().ok());
+            if let Some(cid_font) = cid_font {
+                metrics.default_width =
+                    Some(cid_font.get(b"DW").ok().and_then(number).unwrap_or(1000.0));
+                if let Ok(w) = cid_font.get_deref(b"W", doc).and_then(|o| o.as_array()) {
+                    metrics.cid_widths = parse_cid_widths(w, number);
+                }
+            }
+            return metrics;
+        }
+
+        if subtype == b"Type3"
+            && let Some(a) = font
+                .get_deref(b"FontMatrix", doc)
+                .and_then(|o| o.as_array())
+                .ok()
+                .and_then(|m| m.first())
+                .and_then(number)
+        {
+            metrics.scale = a.abs();
+        }
+        metrics.first_char = font
+            .get(b"FirstChar")
+            .ok()
+            .and_then(number)
+            .map_or(0, |v| v.max(0.0) as u32);
+        if let Ok(widths) = font.get_deref(b"Widths", doc).and_then(|o| o.as_array()) {
+            metrics.widths = widths.iter().map(|w| number(w).unwrap_or(0.0)).collect();
+        }
+        metrics.default_width = font
+            .get_deref(b"FontDescriptor", doc)
+            .and_then(|o| o.as_dict())
+            .ok()
+            .and_then(|d| d.get(b"MissingWidth").ok())
+            .and_then(number)
+            .filter(|w| *w > 0.0);
+        metrics
+    }
+
+    /// Advance of a character code in text space units per unit of font size, if known.
+    fn glyph_width(&self, code: u32) -> Option<f32> {
+        let raw = if self.code_len == 2 {
+            self.cid_widths
+                .iter()
+                .find_map(|entry| match entry {
+                    CidWidths::List(first, list) => code
+                        .checked_sub(*first)
+                        .and_then(|i| list.get(i as usize))
+                        .copied(),
+                    CidWidths::Range(first, last, w) => {
+                        (*first..=*last).contains(&code).then_some(*w)
+                    }
+                })
+                .or(self.default_width)
+        } else {
+            code.checked_sub(self.first_char)
+                .and_then(|i| self.widths.get(i as usize))
+                .copied()
+                .or(self.default_width)
+        };
+        raw.map(|w| w * self.scale)
+    }
+}
+
+/// Parse a CID font `/W` array (PDF 32000-1 §9.7.4.3).
+fn parse_cid_widths(w: &[Object], number: impl Fn(&Object) -> Option<f32>) -> Vec<CidWidths> {
+    let mut entries = Vec::new();
+    let mut i = 0;
+    while i + 1 < w.len() {
+        let Some(first) = number(&w[i]) else {
+            break;
+        };
+        let first = first.max(0.0) as u32;
+        if let Object::Array(list) = &w[i + 1] {
+            entries.push(CidWidths::List(
+                first,
+                list.iter().map(|o| number(o).unwrap_or(0.0)).collect(),
+            ));
+            i += 2;
+        } else {
+            let (Some(last), Some(width)) = (number(&w[i + 1]), w.get(i + 2).and_then(&number))
+            else {
+                break;
+            };
+            entries.push(CidWidths::Range(first, last.max(0.0) as u32, width));
+            i += 3;
+        }
+    }
+    entries
+}
+
+/// Text state parameters that affect glyph placement (PDF 32000-1 §9.3).
+#[derive(Debug, Clone)]
+struct TextState {
+    font: Option<Vec<u8>>,
+    font_size: f32,
+    leading: f32,
+    char_spacing: f32,
+    word_spacing: f32,
+    horizontal_scale: f32,
+}
+
+impl Default for TextState {
+    fn default() -> Self {
+        Self {
+            font: None,
+            font_size: 12.0,
+            leading: 14.4,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scale: 1.0,
+        }
+    }
+}
+
+/// Horizontal displacement, in text space, produced by showing `bytes` with the current font.
+fn string_advance(bytes: &[u8], metrics: Option<&FontMetrics>, state: &TextState) -> f32 {
+    let code_len = metrics.map_or(1, |m| m.code_len);
+    bytes
+        .chunks(code_len)
+        .map(|chunk| {
+            let code = chunk.iter().fold(0u32, |acc, &b| (acc << 8) | u32::from(b));
+            let glyph = metrics
+                .and_then(|m| m.glyph_width(code))
+                .unwrap_or(FALLBACK_GLYPH_WIDTH / 1000.0);
+            let word = if code_len == 1 && code == 32 {
+                state.word_spacing
+            } else {
+                0.0
+            };
+            (glyph * state.font_size + state.char_spacing + word) * state.horizontal_scale
+        })
+        .sum()
+}
+
+fn translation(tx: f32, ty: f32) -> Matrix2D {
+    Matrix2D {
+        e: tx,
+        f: ty,
+        ..Matrix2D::IDENTITY
+    }
+}
+
+/// Record the fragment shown at the current text position and advance the text matrix.
+fn show_fragment(
+    fragments: &mut Vec<TextFragment>,
+    text: &str,
+    advance: f32,
+    text_matrix: &mut Matrix2D,
+    ctm: &Matrix2D,
+    state: &TextState,
+) {
+    if !text.trim().is_empty() {
+        let eff = text_matrix.multiply(ctm);
+        let (x0, y0) = eff.transform_point(0.0, 0.0);
+        let (x1, _) = eff.transform_point(advance, 0.0);
+        let size = state.font_size * (eff.c * eff.c + eff.d * eff.d).sqrt();
+        fragments.push(TextFragment {
+            bbox: BoundingBox::new(x0.min(x1), y0, (x1 - x0).abs(), size.max(1.0)),
+            text: text.to_string(),
+        });
+    }
+    *text_matrix = translation(advance, 0.0).multiply(text_matrix);
+}
+
 /// Extract positioned text fragments from a decoded PDF content stream.
+///
+/// Fonts are not resolved here, so glyph widths are estimated; use
+/// [`extract_page_text`] to place fragments with the page's real font metrics.
 pub fn extract_positioned_fragments(
     content: &Content,
     encodings: &BTreeMap<Vec<u8>, Encoding>,
+) -> Vec<TextFragment> {
+    extract_fragments_with_metrics(content, encodings, &BTreeMap::new())
+}
+
+fn extract_fragments_with_metrics(
+    content: &Content,
+    encodings: &BTreeMap<Vec<u8>, Encoding>,
+    metrics: &BTreeMap<Vec<u8>, FontMetrics>,
 ) -> Vec<TextFragment> {
     let mut fragments = Vec::new();
 
     let mut ctm = Matrix2D::IDENTITY;
     let mut text_matrix = Matrix2D::IDENTITY;
     let mut line_matrix = Matrix2D::IDENTITY;
-    let mut font_size: f32 = 12.0;
-    let mut leading: f32 = 14.4;
-    let mut current_font: Option<Vec<u8>> = None;
+    let mut state = TextState::default();
 
-    let mut state_stack: Vec<(Matrix2D, f32, f32, Option<Vec<u8>>)> = Vec::new();
+    let mut state_stack: Vec<(Matrix2D, TextState)> = Vec::new();
+    let float_at = |op: &lopdf::content::Operation, idx: usize| {
+        op.operands.get(idx).and_then(|o| o.as_float().ok())
+    };
 
     for op in &content.operations {
         match op.operator.as_str() {
             "q" => {
-                state_stack.push((ctm, font_size, leading, current_font.clone()));
+                state_stack.push((ctm, state.clone()));
             }
             "Q" => {
-                if let Some((saved_ctm, saved_font_size, saved_leading, saved_font)) =
-                    state_stack.pop()
-                {
+                if let Some((saved_ctm, saved_state)) = state_stack.pop() {
                     ctm = saved_ctm;
-                    font_size = saved_font_size;
-                    leading = saved_leading;
-                    current_font = saved_font;
+                    state = saved_state;
                 }
             }
             "cm" => {
@@ -181,25 +414,36 @@ pub fn extract_positioned_fragments(
                     ctm = m.multiply(&ctm);
                 }
             }
-            "BT" => {
-                text_matrix = Matrix2D::IDENTITY;
-                line_matrix = Matrix2D::IDENTITY;
-            }
-            "ET" => {
+            "BT" | "ET" => {
                 text_matrix = Matrix2D::IDENTITY;
                 line_matrix = Matrix2D::IDENTITY;
             }
             "Tf" => {
                 if let Some(font_name) = op.operands.first().and_then(|o| o.as_name().ok()) {
-                    current_font = Some(font_name.to_vec());
+                    state.font = Some(font_name.to_vec());
                 }
-                if let Some(size) = op.operands.get(1).and_then(|o| o.as_float().ok()) {
-                    font_size = size;
+                if let Some(size) = float_at(op, 1) {
+                    state.font_size = size;
                 }
             }
             "TL" => {
-                if let Some(l) = op.operands.first().and_then(|o| o.as_float().ok()) {
-                    leading = l;
+                if let Some(l) = float_at(op, 0) {
+                    state.leading = l;
+                }
+            }
+            "Tc" => {
+                if let Some(v) = float_at(op, 0) {
+                    state.char_spacing = v;
+                }
+            }
+            "Tw" => {
+                if let Some(v) = float_at(op, 0) {
+                    state.word_spacing = v;
+                }
+            }
+            "Tz" => {
+                if let Some(v) = float_at(op, 0) {
+                    state.horizontal_scale = v / 100.0;
                 }
             }
             "Tm" => {
@@ -218,170 +462,99 @@ pub fn extract_positioned_fragments(
                     line_matrix = m;
                 }
             }
-            "Td" => {
-                if op.operands.len() >= 2
-                    && let (Ok(tx), Ok(ty)) = (op.operands[0].as_float(), op.operands[1].as_float())
-                {
-                    let trans = Matrix2D {
-                        a: 1.0,
-                        b: 0.0,
-                        c: 0.0,
-                        d: 1.0,
-                        e: tx,
-                        f: ty,
-                    };
-                    line_matrix = trans.multiply(&line_matrix);
+            "Td" | "TD" => {
+                if let (Some(tx), Some(ty)) = (float_at(op, 0), float_at(op, 1)) {
+                    if op.operator == "TD" {
+                        state.leading = -ty;
+                    }
+                    line_matrix = translation(tx, ty).multiply(&line_matrix);
                     text_matrix = line_matrix;
                 }
             }
-            "TD" => {
-                if op.operands.len() >= 2
-                    && let (Ok(tx), Ok(ty)) = (op.operands[0].as_float(), op.operands[1].as_float())
-                {
-                    leading = -ty;
-                    let trans = Matrix2D {
-                        a: 1.0,
-                        b: 0.0,
-                        c: 0.0,
-                        d: 1.0,
-                        e: tx,
-                        f: ty,
-                    };
-                    line_matrix = trans.multiply(&line_matrix);
-                    text_matrix = line_matrix;
-                }
-            }
-            "T*" => {
-                let trans = Matrix2D {
-                    a: 1.0,
-                    b: 0.0,
-                    c: 0.0,
-                    d: 1.0,
-                    e: 0.0,
-                    f: -leading,
-                };
-                line_matrix = trans.multiply(&line_matrix);
-                text_matrix = line_matrix;
-            }
-            "'" => {
-                let trans = Matrix2D {
-                    a: 1.0,
-                    b: 0.0,
-                    c: 0.0,
-                    d: 1.0,
-                    e: 0.0,
-                    f: -leading,
-                };
-                line_matrix = trans.multiply(&line_matrix);
-                text_matrix = line_matrix;
-
-                let enc = current_font.as_ref().and_then(|f| encodings.get(f));
-                if let Some(Object::String(bytes, _)) = op.operands.first() {
-                    let text = decode_bytes_with_encoding(bytes, enc);
-                    if !text.trim().is_empty() {
-                        let eff = text_matrix.multiply(&ctm);
-                        let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (text.chars().count() as f32) * font_size * 0.52;
-                        fragments.push(TextFragment {
-                            bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
-                            text,
-                        });
+            "T*" | "'" | "\"" => {
+                if op.operator == "\"" {
+                    if let Some(aw) = float_at(op, 0) {
+                        state.word_spacing = aw;
+                    }
+                    if let Some(ac) = float_at(op, 1) {
+                        state.char_spacing = ac;
                     }
                 }
-            }
-            "\"" => {
-                let trans = Matrix2D {
-                    a: 1.0,
-                    b: 0.0,
-                    c: 0.0,
-                    d: 1.0,
-                    e: 0.0,
-                    f: -leading,
-                };
-                line_matrix = trans.multiply(&line_matrix);
+                line_matrix = translation(0.0, -state.leading).multiply(&line_matrix);
                 text_matrix = line_matrix;
 
-                let enc = current_font.as_ref().and_then(|f| encodings.get(f));
-                if let Some(Object::String(bytes, _)) = op.operands.get(2) {
-                    let text = decode_bytes_with_encoding(bytes, enc);
-                    if !text.trim().is_empty() {
-                        let eff = text_matrix.multiply(&ctm);
-                        let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (text.chars().count() as f32) * font_size * 0.52;
-                        fragments.push(TextFragment {
-                            bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
-                            text,
-                        });
-                    }
+                let string_operand = match op.operator.as_str() {
+                    "'" => op.operands.first(),
+                    "\"" => op.operands.get(2),
+                    _ => None,
+                };
+                if let Some(Object::String(bytes, _)) = string_operand {
+                    let font = state.font.as_ref();
+                    let text =
+                        decode_bytes_with_encoding(bytes, font.and_then(|f| encodings.get(f)));
+                    let advance = string_advance(bytes, font.and_then(|f| metrics.get(f)), &state);
+                    show_fragment(
+                        &mut fragments,
+                        &text,
+                        advance,
+                        &mut text_matrix,
+                        &ctm,
+                        &state,
+                    );
                 }
             }
             "Tj" => {
-                let enc = current_font.as_ref().and_then(|f| encodings.get(f));
                 if let Some(Object::String(bytes, _)) = op.operands.first() {
-                    let text = decode_bytes_with_encoding(bytes, enc);
-                    if !text.trim().is_empty() {
-                        let eff = text_matrix.multiply(&ctm);
-                        let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (text.chars().count() as f32) * font_size * 0.52;
-                        fragments.push(TextFragment {
-                            bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
-                            text: text.clone(),
-                        });
-
-                        // Advance text matrix horizontally
-                        let advance = Matrix2D {
-                            a: 1.0,
-                            b: 0.0,
-                            c: 0.0,
-                            d: 1.0,
-                            e: w,
-                            f: 0.0,
-                        };
-                        text_matrix = advance.multiply(&text_matrix);
-                    }
+                    let font = state.font.as_ref();
+                    let text =
+                        decode_bytes_with_encoding(bytes, font.and_then(|f| encodings.get(f)));
+                    let advance = string_advance(bytes, font.and_then(|f| metrics.get(f)), &state);
+                    show_fragment(
+                        &mut fragments,
+                        &text,
+                        advance,
+                        &mut text_matrix,
+                        &ctm,
+                        &state,
+                    );
                 }
             }
             "TJ" => {
-                let enc = current_font.as_ref().and_then(|f| encodings.get(f));
                 if let Some(Object::Array(items)) = op.operands.first() {
+                    let font = state.font.as_ref();
+                    let enc = font.and_then(|f| encodings.get(f));
+                    let font_metrics = font.and_then(|f| metrics.get(f));
                     let mut combined_text = String::new();
+                    let mut advance = 0.0;
                     for item in items {
                         match item {
                             Object::String(bytes, _) => {
-                                let part = decode_bytes_with_encoding(bytes, enc);
-                                combined_text.push_str(&part);
+                                combined_text.push_str(&decode_bytes_with_encoding(bytes, enc));
+                                advance += string_advance(bytes, font_metrics, &state);
                             }
-                            Object::Integer(i) if *i < -100 && !combined_text.ends_with(' ') => {
-                                combined_text.push(' ');
-                            }
-                            Object::Real(r) if *r < -100.0 && !combined_text.ends_with(' ') => {
-                                combined_text.push(' ');
+                            Object::Integer(_) | Object::Real(_) => {
+                                // Adjustments are in thousandths of an em; negative values move right
+                                let adjustment = item.as_float().unwrap_or(0.0);
+                                advance -=
+                                    adjustment / 1000.0 * state.font_size * state.horizontal_scale;
+                                if adjustment < -TJ_WORD_GAP_THOUSANDTHS
+                                    && !combined_text.is_empty()
+                                    && !combined_text.ends_with(char::is_whitespace)
+                                {
+                                    combined_text.push(' ');
+                                }
                             }
                             _ => {}
                         }
                     }
-
-                    let clean = combined_text.trim();
-                    if !clean.is_empty() {
-                        let eff = text_matrix.multiply(&ctm);
-                        let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (clean.chars().count() as f32) * font_size * 0.52;
-                        fragments.push(TextFragment {
-                            bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
-                            text: clean.to_string(),
-                        });
-
-                        // Advance text matrix horizontally
-                        let advance = Matrix2D {
-                            a: 1.0,
-                            b: 0.0,
-                            c: 0.0,
-                            d: 1.0,
-                            e: w,
-                            f: 0.0,
-                        };
-                        text_matrix = advance.multiply(&text_matrix);
-                    }
+                    show_fragment(
+                        &mut fragments,
+                        combined_text.trim(),
+                        advance,
+                        &mut text_matrix,
+                        &ctm,
+                        &state,
+                    );
                 }
             }
             _ => {}
@@ -389,6 +562,44 @@ pub fn extract_positioned_fragments(
     }
 
     fragments
+}
+
+/// Whether two fragments sit on the same baseline (within half the font size).
+fn on_same_baseline(prev: &TextFragment, next: &TextFragment) -> bool {
+    let size = prev.bbox.height.max(next.bbox.height);
+    (next.bbox.y - prev.bbox.y).abs() <= size * 0.5
+}
+
+/// Whether the horizontal distance between two fragments on one line is a word space.
+/// A jump backwards larger than the font size also separates words.
+fn is_word_gap(prev: &TextFragment, next: &TextFragment) -> bool {
+    let size = prev.bbox.height.max(next.bbox.height);
+    let gap = next.bbox.x - prev.bbox.x_max();
+    gap > size * WORD_GAP_EM || gap < -size
+}
+
+/// Join fragments in content stream order, starting a new line when the baseline
+/// changes and inserting a space when glyph positions leave a word gap.
+pub fn join_fragments_in_stream_order(fragments: &[TextFragment]) -> String {
+    let mut output = String::new();
+    for (idx, frag) in fragments.iter().enumerate() {
+        if idx > 0 {
+            let prev = &fragments[idx - 1];
+            if !on_same_baseline(prev, frag) {
+                output.truncate(output.trim_end_matches([' ', '\t']).len());
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+            } else if is_word_gap(prev, frag)
+                && !output.ends_with(char::is_whitespace)
+                && !frag.text.starts_with(char::is_whitespace)
+            {
+                output.push(' ');
+            }
+        }
+        output.push_str(&frag.text);
+    }
+    output
 }
 
 /// GoF Strategy pattern: Strategy for determining reading order of text fragments on a page.
@@ -592,12 +803,13 @@ pub fn group_fragments_into_lines(fragments: &[TextFragment]) -> Vec<TextLine> {
 
             for (idx, frag) in line_frags.iter().enumerate() {
                 union_box = union_box.union(&frag.bbox);
-                if idx > 0 {
-                    let prev_max = line_frags[idx - 1].bbox.x_max();
-                    // If there is visible horizontal spacing between fragments, insert space
-                    if frag.bbox.x - prev_max >= 2.0 && !line_text.ends_with(' ') {
-                        line_text.push(' ');
-                    }
+                // If glyph positions leave a word gap between fragments, insert a space
+                if idx > 0
+                    && is_word_gap(&line_frags[idx - 1], frag)
+                    && !line_text.ends_with(char::is_whitespace)
+                    && !frag.text.starts_with(char::is_whitespace)
+                {
+                    line_text.push(' ');
                 }
                 line_text.push_str(&frag.text);
             }
@@ -771,14 +983,9 @@ pub fn select_reading_order_strategy(fragments: &[TextFragment]) -> Box<dyn Read
     }
 }
 
-/// Extract and reconstruct page text respecting multi-column spatial reading order.
-/// If `only_if_multi_column` is true, returns `None` when the page layout is single-column,
-/// allowing the caller to use default linear stream extraction.
-pub fn extract_page_text_spatial(
-    doc: &lopdf::Document,
-    page_id: (u32, u16),
-    only_if_multi_column: bool,
-) -> Option<String> {
+/// Decode a page content stream into positioned fragments using the page's font
+/// encodings and glyph widths.
+fn page_fragments(doc: &lopdf::Document, page_id: (u32, u16)) -> Option<Vec<TextFragment>> {
     let content_data = doc.get_page_content(page_id);
     if content_data.is_empty() {
         return None;
@@ -788,31 +995,55 @@ pub fn extract_page_text_spatial(
         return None;
     };
 
-    // Load font encodings for proper glyph mapping
-    let encodings: BTreeMap<Vec<u8>, Encoding> = doc
-        .get_page_fonts(page_id)
-        .map(|fonts| {
-            fonts
-                .into_iter()
-                .filter_map(|(name, font)| font.get_font_encoding(doc).ok().map(|enc| (name, enc)))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let fragments = extract_positioned_fragments(&content, &encodings);
-    if fragments.is_empty() {
-        return None;
+    // Load font encodings for proper glyph mapping, and widths for glyph placement
+    let fonts = doc.get_page_fonts(page_id).unwrap_or_default();
+    let mut encodings: BTreeMap<Vec<u8>, Encoding> = BTreeMap::new();
+    let mut metrics: BTreeMap<Vec<u8>, FontMetrics> = BTreeMap::new();
+    for (name, font) in fonts {
+        if let Ok(enc) = font.get_font_encoding(doc) {
+            encodings.insert(name.clone(), enc);
+        }
+        metrics.insert(name, FontMetrics::from_font(doc, font));
     }
+
+    let fragments = extract_fragments_with_metrics(&content, &encodings, &metrics);
+    (!fragments.is_empty()).then_some(fragments)
+}
+
+fn non_empty(text: String) -> Option<String> {
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// Extract and reconstruct page text respecting multi-column spatial reading order.
+/// If `only_if_multi_column` is true, returns `None` when the page layout is single-column,
+/// allowing the caller to use default linear stream extraction.
+pub fn extract_page_text_spatial(
+    doc: &lopdf::Document,
+    page_id: (u32, u16),
+    only_if_multi_column: bool,
+) -> Option<String> {
+    let fragments = page_fragments(doc, page_id)?;
 
     let strategy = select_reading_order_strategy(&fragments);
     if only_if_multi_column && !strategy.is_multi_column() {
         return None;
     }
 
-    let reconstructed = strategy.reconstruct_text(&fragments);
-    if reconstructed.trim().is_empty() {
-        None
+    non_empty(strategy.reconstruct_text(&fragments))
+}
+
+/// Extract page text from positioned glyphs: multi-column reading order when gutters
+/// are detected, otherwise content stream order. Word spaces come from glyph
+/// positions (TJ adjustments and text moves), so fonts without a space glyph and
+/// words split across operators still read correctly.
+pub fn extract_page_text(doc: &lopdf::Document, page_id: (u32, u16)) -> Option<String> {
+    let fragments = page_fragments(doc, page_id)?;
+
+    let strategy = select_reading_order_strategy(&fragments);
+    let text = if strategy.is_multi_column() {
+        strategy.reconstruct_text(&fragments)
     } else {
-        Some(reconstructed)
-    }
+        join_fragments_in_stream_order(&fragments)
+    };
+    non_empty(text)
 }

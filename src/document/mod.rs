@@ -14,7 +14,7 @@ pub use attachments::extract_document_attachments;
 pub use forms::extract_document_forms;
 pub use layout::{
     BoundingBox, MultiColumnSpatialFlow, ReadingOrderStrategy, SingleColumnFlow, TextFragment,
-    TextLine, extract_page_text_spatial,
+    TextLine, extract_page_text, extract_page_text_spatial, join_fragments_in_stream_order,
 };
 pub use links::{
     decode_pdf_string, extract_page_links, object_to_string, resolve_dest,

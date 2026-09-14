@@ -273,12 +273,13 @@ pub fn load_pdf_from_path_with_password(
         };
         let image_count = images.len();
 
-        let spatial_text =
-            page_id.and_then(|id| super::layout::extract_page_text_spatial(&pdf_doc, id, true));
+        // Rebuild text from positioned glyphs so word spaces follow glyph placement
+        // (TJ adjustments, Td/Tm moves) and multi-column pages keep reading order.
+        let positioned_text = page_id.and_then(|id| super::layout::extract_page_text(&pdf_doc, id));
 
-        let mut text = match spatial_text {
+        let mut text = match positioned_text {
             Some(reconstructed) => {
-                debug!(target: "parser", page = page_num, "Applied multi-column spatial reading order reconstruction");
+                debug!(target: "parser", page = page_num, "Reconstructed page text from positioned glyphs");
                 reconstructed
             }
             None => match pdf_doc.extract_text(&[page_num]) {
