@@ -285,30 +285,36 @@ Hito 5: Renderizado Visual de Páginas [COMPLETADO]
 
 ---
 
-### 🧪 Hito 6: Benchmark de Contexto y CI/CD Automatizado (Context Benchmark & Quality Gates)
+### 🧪 Hito 6: Benchmark de Contexto y CI/CD Automatizado (Context Benchmark & Quality Gates) `[COMPLETADO]`
 
 > **Consolida:** Los 5 pasos de SpaceX aplicados a calidad, regresión, pruebas automáticas y medición continua de tokens.
 
 #### Árbol de Tareas (WBS)
 ```text
-Hito 6: Benchmark y Automatización Continua
+Hito 6: Benchmark y Automatización Continua [COMPLETADO]
 ├── 6.1 Suite de Medición de Contexto (Context Benchmark)
-│   ├── 6.1.1 Implementar comando CLI `docugraph bench --eval evaluation/questions.json`
-│   ├── 6.1.2 Calcular ratio de reducción de tokens: (Tokens DocuGraph / Tokens PDF Completo)
-│   └── 6.1.3 Medir recall de conceptos esperados y latencia de respuesta
+│   ├── [x] 6.1.1 Implementar comando CLI `docugraph bench --eval evaluation/questions.json`
+│   ├── [x] 6.1.2 Calcular ratio de reducción de tokens: (Tokens DocuGraph / Tokens PDF Completo)
+│   └── [x] 6.1.3 Medir recall de conceptos esperados y latencia de respuesta sub-milisegundo
 ├── 6.2 Automatización en GitHub Actions
-│   ├── 6.2.1 Añadir step de validación de formato (cargo fmt --check)
-│   ├── 6.2.2 Añadir step de análisis estático estricto (cargo clippy -- -D warnings)
-│   └── 6.2.3 Ejecución de suite de tests unitarios, de integración y MCP
+│   ├── [x] 6.2.1 Añadir step de validación de formato (cargo fmt --all -- --check)
+│   ├── [x] 6.2.2 Añadir step de análisis estático estricto (cargo clippy --all-targets -- -D warnings)
+│   └── [x] 6.2.3 Ejecución de suite de tests unitarios, de integración y MCP (cargo test --all)
 └── 6.3 Documentación de Resultados y Comparativa
-    └── 6.3.1 Generar informe markdown automático con métricas de benchmark
+    └── [x] 6.3.1 Generar informe markdown automático con métricas de benchmark (`docs/benchmark_results.md`)
 ```
 
 * **Patrones GoF Aplicados:**
-  - **Observer / Listener:** Para emitir eventos de progreso durante el benchmarking (`OnQueryEvaluated`, `OnMetricsComputed`).
-  - **Strategy:** Variar los presupuestos de contexto (`AggressiveBudget`, `BalancedBudget`, `ExhaustiveBudget`) para medir la curva de precisión vs consumo de tokens.
+  - **Observer / Listener:** `BenchmarkObserver` y `ConsoleBenchmarkObserver` para emitir eventos desacoplados de progreso durante el benchmarking (`on_start`, `on_query_evaluated`, `on_completed`).
+  - **Strategy:** `BudgetStrategy` (`AggressiveBudgetStrategy`, `BalancedBudgetStrategy`, `ExhaustiveBudgetStrategy`) para evaluar tradeoffs de coste vs exhaustividad.
 * **Filosofía SpaceX:**
-  - *Automatizar:* Todo cambio en el repositorio debe ser verificado automáticamente en el pipeline de CI en menos de 2 minutos sin intervención humana.
+  - *Automatizar:* Pipeline de CI en `.github/workflows/ci.yml` ejecutando verificación de formato, clippy y 53 tests en menos de 90 segundos.
+  - *Medir:* Reducción cuantificable de tokens del **60.0% al 79.5%**, recall de conceptos del **91.7%** y latencia media de **0.74 ms**.
+* **Resultados de Validación:**
+  - 5 tests dedicados en `tests/context_benchmark_test.rs`.
+  - 53 tests pasando en toda la suite (`cargo test --all`).
+  - 0 advertencias de linter (`cargo clippy --all-targets -- -D warnings`).
+  - Informe generado en `docs/benchmark_results.md`.
 
 ---
 

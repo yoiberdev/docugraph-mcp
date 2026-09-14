@@ -62,6 +62,21 @@ enum Commands {
         #[arg(short, long, default_value = "1024")]
         width: u32,
     },
+    /// Run precision, recall, and token reduction benchmark on evaluation dataset
+    Bench {
+        /// Path to evaluation questions JSON file (default: evaluation/questions.json)
+        #[arg(short, long, default_value = "evaluation/questions.json")]
+        eval: String,
+        /// Budget strategy: aggressive, balanced, or exhaustive (default: balanced)
+        #[arg(short, long, default_value = "balanced")]
+        strategy: String,
+        /// Optional target document ID or file path to evaluate against
+        #[arg(short, long)]
+        document: Option<String>,
+        /// Optional path to save markdown summary report
+        #[arg(short, long)]
+        out: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -330,6 +345,57 @@ async fn main() -> anyhow::Result<()> {
                 );
             } else {
                 eprintln!("Document not found: {}", document);
+            }
+        }
+        Commands::Bench {
+            eval,
+            strategy,
+            document,
+            out,
+        } => {
+            info!(target: "cli", eval = %eval, strategy = %strategy, "Running context benchmark");
+            let questions = docugraph::benchmark::BenchmarkRunner::load_questions_from_file(&eval)?;
+
+            let docs = if let Some(ref doc_id) = document {
+                if let Some(d) = store.get(doc_id) {
+                    vec![d]
+                } else {
+                    let path = std::path::Path::new(doc_id);
+                    if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+                        vec![docugraph::document::load_pdf_from_path(path)?]
+                    } else {
+                        eprintln!(
+                            "Document '{}' not found. Evaluating on benchmark reference document.",
+                            doc_id
+                        );
+                        vec![docugraph::benchmark::create_benchmark_sample_document()]
+                    }
+                }
+            } else {
+                let metas = store.list_documents();
+                let mut d_list: Vec<_> =
+                    metas.into_iter().filter_map(|m| store.get(&m.id)).collect();
+                d_list.push(docugraph::benchmark::create_benchmark_sample_document());
+                d_list
+            };
+
+            let budget_strategy: Box<dyn docugraph::benchmark::BudgetStrategy> =
+                match strategy.to_lowercase().as_str() {
+                    "aggressive" => Box::new(docugraph::benchmark::AggressiveBudgetStrategy),
+                    "exhaustive" => Box::new(docugraph::benchmark::ExhaustiveBudgetStrategy),
+                    _ => Box::new(docugraph::benchmark::BalancedBudgetStrategy),
+                };
+
+            let mut runner = docugraph::benchmark::BenchmarkRunner::new(budget_strategy);
+            runner.add_observer(std::sync::Arc::new(
+                docugraph::benchmark::ConsoleBenchmarkObserver,
+            ));
+
+            let report = runner.run_suite(&questions, &docs)?;
+
+            if let Some(out_path) = out {
+                std::fs::write(&out_path, report.to_markdown_summary())?;
+                eprintln!("📝 Benchmark markdown report saved to: {}", out_path);
             }
         }
     }
