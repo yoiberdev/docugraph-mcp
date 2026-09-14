@@ -133,6 +133,8 @@ pub struct DocumentInfoResult {
     pub untrusted_text_detected: bool,
     pub scanned_pages_count: u32,
     pub scan_warning: Option<String>,
+    #[serde(default)]
+    pub total_links: u32,
 }
 
 /// Outline node returned by `document_outline`.
@@ -176,4 +178,40 @@ pub struct RenderPageResult {
     pub data_uri: String,
     /// Whether the rendered image was served from disk cache (GoF Proxy pattern)
     pub from_cache: bool,
+}
+
+/// Parameters for `document_get_links`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentGetLinksParams {
+    /// Document identifier or content hash
+    pub document_id: String,
+    /// Optional 1-based page number to filter links on a specific page
+    pub page: Option<u32>,
+    /// Optional filter kind: "all", "external", or "internal" (default: "all")
+    pub kind: Option<String>,
+}
+
+/// A hyperlink or cross-reference result item.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentLinkResult {
+    /// 1-based page number where the link is located
+    pub page_number: u32,
+    /// Type of link: "external", "internal", or "named"
+    pub kind: String,
+    /// External destination URL (if external link)
+    pub uri: Option<String>,
+    /// Target 1-based page number (if internal cross-reference)
+    pub target_page: Option<u32>,
+    /// Target named anchor or destination identifier (if unresolved to a page)
+    pub named_target: Option<String>,
+    /// Bounding box rectangle `[x0, y0, x1, y1]` on the source page if present
+    pub rect: Option<[f32; 4]>,
+}
+
+/// Complete result returned by `document_get_links`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentGetLinksResult {
+    pub document_id: String,
+    pub total_links: usize,
+    pub links: Vec<DocumentLinkResult>,
 }

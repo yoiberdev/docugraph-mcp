@@ -48,8 +48,77 @@ pub enum PageKind {
     Empty,
 }
 
+/// Target destination type of a link found within a document.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", content = "value")]
+pub enum LinkTarget {
+    /// External web link (HTTP / HTTPS / mailto, etc.)
+    Uri(String),
+    /// Internal jump to a 1-based page number
+    InternalPage(u32),
+    /// Named destination that could not be resolved to a specific page number
+    Named(String),
+}
+
+/// A hyperlink or internal cross-reference extracted from a document page.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DocumentLink {
+    /// 1-based page number where the link is located
+    pub page_number: u32,
+    /// Target destination of the link
+    pub target: LinkTarget,
+    /// Bounding box rectangle [x0, y0, x1, y1] on the source page if present
+    pub rect: Option<[f32; 4]>,
+    /// External URI string if this is an external link
+    pub uri: Option<String>,
+    /// Target page number if this is an internal jump
+    pub target_page: Option<u32>,
+}
+
+impl DocumentLink {
+    pub fn uri(page_number: u32, uri: impl Into<String>, rect: Option<[f32; 4]>) -> Self {
+        let u = uri.into();
+        Self {
+            page_number,
+            target: LinkTarget::Uri(u.clone()),
+            rect,
+            uri: Some(u),
+            target_page: None,
+        }
+    }
+
+    pub fn internal(page_number: u32, target_page: u32, rect: Option<[f32; 4]>) -> Self {
+        Self {
+            page_number,
+            target: LinkTarget::InternalPage(target_page),
+            rect,
+            uri: None,
+            target_page: Some(target_page),
+        }
+    }
+
+    pub fn named(page_number: u32, name: impl Into<String>, rect: Option<[f32; 4]>) -> Self {
+        let n = name.into();
+        Self {
+            page_number,
+            target: LinkTarget::Named(n),
+            rect,
+            uri: None,
+            target_page: None,
+        }
+    }
+
+    pub fn is_external(&self) -> bool {
+        matches!(self.target, LinkTarget::Uri(_))
+    }
+
+    pub fn is_internal(&self) -> bool {
+        matches!(self.target, LinkTarget::InternalPage(_))
+    }
+}
+
 /// Metadata extracted from a document.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DocumentMetadata {
     pub id: String,
     pub title: String,
@@ -64,6 +133,8 @@ pub struct DocumentMetadata {
     pub scanned_pages_count: u32,
     #[serde(default)]
     pub source_path: Option<String>,
+    #[serde(default)]
+    pub total_links: u32,
 }
 
 /// A single extracted page from a document.
@@ -81,6 +152,9 @@ pub struct Page {
     pub kind: PageKind,
     /// Number of bitmap images discovered in the page resources
     pub image_count: usize,
+    /// Hyperlinks extracted from this page (external URIs and internal cross-references)
+    #[serde(default)]
+    pub links: Vec<DocumentLink>,
 }
 
 impl Page {
@@ -95,6 +169,7 @@ impl Page {
             untrusted_text_detected: false,
             kind: PageKind::DigitalText,
             image_count: 0,
+            links: Vec::new(),
         }
     }
 }
@@ -196,6 +271,18 @@ impl Document {
     /// Retrieve the text of a specific page (1-based index).
     pub fn get_page(&self, page_number: u32) -> Option<&Page> {
         self.pages.iter().find(|p| p.page_number == page_number)
+    }
+
+    /// Return all hyperlinks extracted across all pages in this document.
+    pub fn all_links(&self) -> Vec<&DocumentLink> {
+        self.pages.iter().flat_map(|p| &p.links).collect()
+    }
+
+    /// Return all hyperlinks extracted for a specific page number.
+    pub fn links_for_page(&self, page_number: u32) -> Vec<&DocumentLink> {
+        self.get_page(page_number)
+            .map(|p| p.links.iter().collect())
+            .unwrap_or_default()
     }
 
     /// Find a section by its unique section ID.

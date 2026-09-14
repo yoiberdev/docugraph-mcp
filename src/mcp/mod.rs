@@ -7,3 +7,4 @@ pub mod server;
 pub mod tools;
 
 pub use server::DocuGraphServer;
+pub use tools::*;

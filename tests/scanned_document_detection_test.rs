@@ -214,6 +214,7 @@ async fn test_mcp_server_scanned_warnings_in_tools() {
         untrusted_text_detected: false,
         scanned_pages_count: 1,
         source_path: None,
+        total_links: 0,
     });
 
     let mut page_1 = Page::new(

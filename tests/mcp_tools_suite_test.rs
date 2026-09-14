@@ -19,6 +19,7 @@ fn create_test_server() -> DocuGraphServer {
         untrusted_text_detected: false,
         scanned_pages_count: 0,
         source_path: None,
+        total_links: 0,
     });
 
     doc.add_page(Page::new(

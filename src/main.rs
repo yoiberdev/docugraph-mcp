@@ -77,6 +77,20 @@ enum Commands {
         #[arg(short, long)]
         out: Option<String>,
     },
+    /// Extract hyperlinks and internal cross-references
+    Links {
+        /// Document identifier or filesystem path to PDF
+        document: String,
+        /// Optional page number filter (1-based)
+        #[arg(short, long)]
+        page: Option<u32>,
+        /// Filter link kind: all, external, internal
+        #[arg(short, long, default_value = "all")]
+        kind: String,
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[tokio::main]
@@ -267,6 +281,7 @@ async fn main() -> anyhow::Result<()> {
                         "No (Documento digital)".to_string()
                     }
                 );
+                eprintln!("  Links:     {}", doc.metadata.total_links);
                 eprintln!("\n🌳 Outline Preview:");
                 print_outline_tree(&doc.sections, 0);
             } else {
@@ -396,6 +411,115 @@ async fn main() -> anyhow::Result<()> {
             if let Some(out_path) = out {
                 std::fs::write(&out_path, report.to_markdown_summary())?;
                 eprintln!("📝 Benchmark markdown report saved to: {}", out_path);
+            }
+        }
+        Commands::Links {
+            document,
+            page,
+            kind,
+            format,
+        } => {
+            info!(target: "cli", document = %document, "Extracting document links");
+            let doc = if let Some(d) = store.get(&document) {
+                Some(d)
+            } else {
+                let path = std::path::Path::new(&document);
+                if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+                    Some(docugraph::document::load_pdf_from_path(path)?)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(doc) = doc {
+                let kind_filter = kind.to_lowercase();
+                let pages: Vec<&docugraph::document::Page> = if let Some(p) = page {
+                    doc.get_page(p).into_iter().collect()
+                } else {
+                    doc.pages.iter().collect()
+                };
+
+                let mut matched_links = Vec::new();
+                for p in pages {
+                    for link in &p.links {
+                        let matches = match kind_filter.as_str() {
+                            "external" => link.is_external(),
+                            "internal" => link.is_internal(),
+                            _ => true,
+                        };
+                        if matches {
+                            matched_links.push(link);
+                        }
+                    }
+                }
+
+                if format.eq_ignore_ascii_case("json") {
+                    let results: Vec<docugraph::mcp::DocumentLinkResult> = matched_links
+                        .iter()
+                        .map(|link| docugraph::mcp::DocumentLinkResult {
+                            page_number: link.page_number,
+                            kind: match &link.target {
+                                docugraph::document::LinkTarget::Uri(_) => "external".to_string(),
+                                docugraph::document::LinkTarget::InternalPage(_) => {
+                                    "internal".to_string()
+                                }
+                                docugraph::document::LinkTarget::Named(_) => "named".to_string(),
+                            },
+                            uri: link.uri.clone(),
+                            target_page: link.target_page,
+                            named_target: match &link.target {
+                                docugraph::document::LinkTarget::Named(n) => Some(n.clone()),
+                                _ => None,
+                            },
+                            rect: link.rect,
+                        })
+                        .collect();
+
+                    let res = docugraph::mcp::DocumentGetLinksResult {
+                        document_id: doc.id.0.clone(),
+                        total_links: results.len(),
+                        links: results,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    eprintln!("\n🔗 Extracted Hyperlinks for '{}':", doc.metadata.title);
+                    eprintln!("  Total Links: {}", matched_links.len());
+                    if matched_links.is_empty() {
+                        eprintln!("  No links found matching filter criteria.");
+                    } else {
+                        eprintln!();
+                        for (idx, link) in matched_links.iter().enumerate() {
+                            let (target_desc, kind_desc) = match &link.target {
+                                docugraph::document::LinkTarget::Uri(u) => {
+                                    (u.clone(), "External URI")
+                                }
+                                docugraph::document::LinkTarget::InternalPage(p) => {
+                                    (format!("Page {}", p), "Internal GoTo")
+                                }
+                                docugraph::document::LinkTarget::Named(n) => {
+                                    (format!("Named Dest: {}", n), "Named Destination")
+                                }
+                            };
+                            let rect_desc = match link.rect {
+                                Some([x0, y0, x1, y1]) => {
+                                    format!(" [rect: {:.1}, {:.1}, {:.1}, {:.1}]", x0, y0, x1, y1)
+                                }
+                                None => String::new(),
+                            };
+                            eprintln!(
+                                "  [{}] p.{} | {:<18} | {}{}",
+                                idx + 1,
+                                link.page_number,
+                                kind_desc,
+                                target_desc,
+                                rect_desc
+                            );
+                        }
+                        eprintln!();
+                    }
+                }
+            } else {
+                eprintln!("Document not found: {}", document);
             }
         }
     }

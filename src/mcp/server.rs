@@ -189,6 +189,7 @@ impl DocuGraphServer {
                 untrusted_text_detected: doc.metadata.untrusted_text_detected,
                 scanned_pages_count: doc.metadata.scanned_pages_count,
                 scan_warning,
+                total_links: doc.metadata.total_links,
             };
             serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
         } else {
@@ -206,6 +207,7 @@ impl DocuGraphServer {
                 untrusted_text_detected: false,
                 scanned_pages_count: 0,
                 scan_warning: None,
+                total_links: 0,
             })
             .unwrap_or_else(|_| "{}".to_string())
         }
@@ -444,6 +446,73 @@ impl DocuGraphServer {
                 "error": format!("Document '{doc_id}' not found."),
                 "document_id": doc_id,
                 "page_number": page_num,
+            })
+            .to_string()
+        }
+    }
+
+    /// Extract hyperlinks and internal cross-references from a document.
+    #[tool(
+        name = "document_get_links",
+        description = "Extract hyperlinks and internal cross-references from a document with exact page numbers, URLs, and coordinates."
+    )]
+    pub async fn document_get_links(&self, params: Parameters<DocumentGetLinksParams>) -> String {
+        let doc_id = &params.0.document_id;
+        let page_filter = params.0.page;
+        let kind_filter = params.0.kind.as_deref().unwrap_or("all").to_lowercase();
+
+        if let Some(doc) = self.store.get(doc_id) {
+            let mut results = Vec::new();
+
+            let target_pages: Vec<&crate::document::Page> = if let Some(p) = page_filter {
+                doc.get_page(p).into_iter().collect()
+            } else {
+                doc.pages.iter().collect()
+            };
+
+            for page in target_pages {
+                for link in &page.links {
+                    let kind_str = match &link.target {
+                        crate::document::LinkTarget::Uri(_) => "external",
+                        crate::document::LinkTarget::InternalPage(_) => "internal",
+                        crate::document::LinkTarget::Named(_) => "named",
+                    };
+
+                    let matches_kind = match kind_filter.as_str() {
+                        "external" => link.is_external(),
+                        "internal" => link.is_internal(),
+                        _ => true,
+                    };
+
+                    if matches_kind {
+                        results.push(DocumentLinkResult {
+                            page_number: link.page_number,
+                            kind: kind_str.to_string(),
+                            uri: link.uri.clone(),
+                            target_page: link.target_page,
+                            named_target: match &link.target {
+                                crate::document::LinkTarget::Named(name) => Some(name.clone()),
+                                _ => None,
+                            },
+                            rect: link.rect,
+                        });
+                    }
+                }
+            }
+
+            let response = DocumentGetLinksResult {
+                document_id: doc_id.clone(),
+                total_links: results.len(),
+                links: results,
+            };
+
+            serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            serde_json::json!({
+                "error": format!("Document '{doc_id}' not found."),
+                "document_id": doc_id,
+                "total_links": 0,
+                "links": []
             })
             .to_string()
         }

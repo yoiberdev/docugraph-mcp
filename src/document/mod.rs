@@ -1,7 +1,9 @@
 //! Document ingestion, layout models, and provenance tracking.
 
 pub mod layout;
+pub mod links;
 pub mod model;
+pub mod outline_strategy;
 pub mod parser;
 pub mod provenance;
 pub mod structure;
@@ -11,7 +13,16 @@ pub use layout::{
     BoundingBox, MultiColumnSpatialFlow, ReadingOrderStrategy, SingleColumnFlow, TextFragment,
     TextLine, extract_page_text_spatial,
 };
-pub use model::{Document, DocumentId, DocumentMetadata, Page, PageKind, SectionNode};
+pub use links::{
+    decode_pdf_string, extract_page_links, object_to_string, resolve_dest,
+    resolve_named_destination,
+};
+pub use model::{
+    Document, DocumentId, DocumentLink, DocumentMetadata, LinkTarget, Page, PageKind, SectionNode,
+};
+pub use outline_strategy::{
+    FallbackOutlineStrategy, NativeOutlineExtractor, OutlineExtractor, TypographicOutlineExtractor,
+};
 pub use parser::{
     PageSecurityScan, inspect_page_images, load_pdf_from_path, load_pdf_from_path_with_password,
     scan_page_security,

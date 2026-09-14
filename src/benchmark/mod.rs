@@ -413,6 +413,7 @@ pub fn create_benchmark_sample_document() -> Document {
         untrusted_text_detected: false,
         scanned_pages_count: 0,
         source_path: None,
+        total_links: 0,
     });
 
     // Page 1: Strategy Pattern Deep Dive
