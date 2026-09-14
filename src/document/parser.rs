@@ -271,12 +271,21 @@ pub fn load_pdf_from_path_with_password(
         };
         let image_count = images.len();
 
-        let mut text = match pdf_doc.extract_text(&[page_num]) {
-            Ok(extracted) => extracted,
-            Err(err) => {
-                warn!(target: "parser", page = page_num, error = %err, "Failed to extract text for page; recording as empty");
-                String::new()
+        let spatial_text =
+            page_id.and_then(|id| super::layout::extract_page_text_spatial(&pdf_doc, id, true));
+
+        let mut text = match spatial_text {
+            Some(reconstructed) => {
+                debug!(target: "parser", page = page_num, "Applied multi-column spatial reading order reconstruction");
+                reconstructed
             }
+            None => match pdf_doc.extract_text(&[page_num]) {
+                Ok(extracted) => extracted,
+                Err(err) => {
+                    warn!(target: "parser", page = page_num, error = %err, "Failed to extract text for page; recording as empty");
+                    String::new()
+                }
+            },
         };
 
         let untrusted_detected = security_scan.untrusted_text_detected;
