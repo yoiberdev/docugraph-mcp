@@ -193,6 +193,8 @@ impl DocuGraphServer {
                 has_forms: doc.metadata.has_forms,
                 total_form_fields: doc.metadata.total_form_fields,
                 is_tagged: doc.metadata.is_tagged,
+                has_attachments: doc.metadata.has_attachments,
+                total_attachments: doc.metadata.total_attachments,
             };
             serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
         } else {
@@ -214,6 +216,8 @@ impl DocuGraphServer {
                 has_forms: false,
                 total_form_fields: 0,
                 is_tagged: false,
+                has_attachments: false,
+                total_attachments: 0,
             })
             .unwrap_or_else(|_| "{}".to_string())
         }
@@ -580,6 +584,124 @@ impl DocuGraphServer {
                 "document_id": doc_id,
                 "total_fields": 0,
                 "fields": []
+            })
+            .to_string()
+        }
+    }
+
+    /// Retrieve metadata for all embedded files and attachments inside a document.
+    #[tool(
+        name = "document_get_attachments",
+        description = "List all embedded file attachments (e.g. ZUGFeRD/Factur-X XML, CSV, datasets) with names, MIME types, and sizes."
+    )]
+    pub async fn document_get_attachments(
+        &self,
+        params: Parameters<DocumentGetAttachmentsParams>,
+    ) -> String {
+        let doc_id = &params.0.document_id;
+        if let Some(doc) = self.store.get(doc_id) {
+            let attachments: Vec<AttachmentSummaryResult> = doc
+                .attachments
+                .iter()
+                .map(|att| AttachmentSummaryResult {
+                    id: att.id.clone(),
+                    filename: att.filename.clone(),
+                    description: att.description.clone(),
+                    mime_type: att.mime_type.clone(),
+                    size_bytes: att.size_bytes,
+                    checksum_md5: att.checksum_md5.clone(),
+                    mod_date: att.mod_date.clone(),
+                    is_text: att.is_text,
+                    page_number: att.page_number,
+                })
+                .collect();
+
+            let res = DocumentGetAttachmentsResult {
+                document_id: doc_id.clone(),
+                total_attachments: attachments.len(),
+                attachments,
+            };
+            serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            serde_json::json!({
+                "error": format!("Document '{doc_id}' not found."),
+                "document_id": doc_id,
+                "total_attachments": 0,
+                "attachments": []
+            })
+            .to_string()
+        }
+    }
+
+    /// Read and decode the content of an embedded file attachment (e.g. ZUGFeRD XML, CSV, dataset).
+    #[tool(
+        name = "document_read_attachment",
+        description = "Read and decode the content of an embedded attachment by filename or identifier. Returns text (UTF-8) or base64."
+    )]
+    pub async fn document_read_attachment(
+        &self,
+        params: Parameters<DocumentReadAttachmentParams>,
+    ) -> String {
+        let doc_id = &params.0.document_id;
+        let name_or_id = &params.0.name_or_id;
+        let max_bytes = params.0.max_bytes.unwrap_or(524_288); // 512 KB default limit
+
+        if let Some(doc) = self.store.get(doc_id) {
+            if let Some(att) = doc.get_attachment(name_or_id) {
+                let force_base64 = params.0.encoding.as_deref() == Some("base64");
+                let should_be_text = !force_base64 && att.is_text;
+
+                let (encoded_content, truncated) = if att.data.len() > max_bytes {
+                    let slice = &att.data[..max_bytes];
+                    if should_be_text {
+                        let text = String::from_utf8_lossy(slice).to_string();
+                        (text, true)
+                    } else {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(slice);
+                        (b64, true)
+                    }
+                } else if should_be_text {
+                    let text = String::from_utf8_lossy(&att.data).to_string();
+                    (text, false)
+                } else {
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&att.data);
+                    (b64, false)
+                };
+
+                let res = DocumentReadAttachmentResult {
+                    document_id: doc_id.clone(),
+                    filename: att.filename.clone(),
+                    mime_type: att.mime_type.clone(),
+                    size_bytes: att.size_bytes,
+                    encoding: if should_be_text {
+                        "text".to_string()
+                    } else {
+                        "base64".to_string()
+                    },
+                    content: encoded_content,
+                    truncated,
+                };
+
+                serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+            } else {
+                serde_json::json!({
+                    "error": format!("Attachment '{name_or_id}' not found in document '{doc_id}'."),
+                    "document_id": doc_id,
+                    "filename": name_or_id,
+                    "size_bytes": 0,
+                    "content": ""
+                })
+                .to_string()
+            }
+        } else {
+            serde_json::json!({
+                "error": format!("Document '{doc_id}' not found."),
+                "document_id": doc_id,
+                "filename": name_or_id,
+                "size_bytes": 0,
+                "content": ""
             })
             .to_string()
         }

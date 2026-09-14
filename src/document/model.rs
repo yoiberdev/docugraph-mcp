@@ -174,6 +174,43 @@ pub struct FormField {
     pub rect: Option<[f32; 4]>,
 }
 
+/// An embedded file or attachment extracted from a PDF (/EmbeddedFiles, /AF, or /FileAttachment).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EmbeddedAttachment {
+    /// Unique identifier for the attachment (e.g. "att_factur-x.xml")
+    pub id: String,
+    /// Filename (extracted from /UF or /F)
+    pub filename: String,
+    /// Optional human-readable description (/Desc)
+    pub description: Option<String>,
+    /// MIME subtype if specified (/Subtype, e.g. "text/xml", "application/pdf")
+    pub mime_type: Option<String>,
+    /// Uncompressed file size in bytes
+    pub size_bytes: u64,
+    /// MD5 checksum hex string if specified in /Params /CheckSum
+    pub checksum_md5: Option<String>,
+    /// Modification date string if specified (/Params /ModDate)
+    pub mod_date: Option<String>,
+    /// Whether the content is valid UTF-8 text (e.g. XML, CSV, JSON, TXT)
+    pub is_text: bool,
+    /// 1-based page number if this attachment is associated with a page annotation
+    pub page_number: Option<u32>,
+    /// Extracted raw content bytes (decompressed)
+    #[serde(default)]
+    pub data: Vec<u8>,
+}
+
+impl EmbeddedAttachment {
+    /// Return the content decoded as UTF-8 string if valid, or None if binary.
+    pub fn text_content(&self) -> Option<&str> {
+        if self.is_text {
+            std::str::from_utf8(&self.data).ok()
+        } else {
+            None
+        }
+    }
+}
+
 /// Metadata extracted from a document.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DocumentMetadata {
@@ -198,6 +235,10 @@ pub struct DocumentMetadata {
     pub total_form_fields: u32,
     #[serde(default)]
     pub is_tagged: bool,
+    #[serde(default)]
+    pub has_attachments: bool,
+    #[serde(default)]
+    pub total_attachments: u32,
 }
 
 /// A single extracted page from a document.
@@ -309,6 +350,8 @@ pub struct Document {
     pub sections: Vec<SectionNode>,
     #[serde(default)]
     pub forms: Vec<FormField>,
+    #[serde(default)]
+    pub attachments: Vec<EmbeddedAttachment>,
 }
 
 impl Document {
@@ -321,6 +364,7 @@ impl Document {
             pages: Vec::new(),
             sections: Vec::new(),
             forms: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -362,6 +406,18 @@ impl Document {
             .iter()
             .filter(|f| f.page_number == Some(page_number))
             .collect()
+    }
+
+    /// Return a slice of all embedded file attachments in this document.
+    pub fn attachments(&self) -> &[EmbeddedAttachment] {
+        &self.attachments
+    }
+
+    /// Find an embedded attachment by its filename or ID (case-insensitive).
+    pub fn get_attachment(&self, name_or_id: &str) -> Option<&EmbeddedAttachment> {
+        self.attachments.iter().find(|a| {
+            a.filename.eq_ignore_ascii_case(name_or_id) || a.id.eq_ignore_ascii_case(name_or_id)
+        })
     }
 
     /// Find a section by its unique section ID.

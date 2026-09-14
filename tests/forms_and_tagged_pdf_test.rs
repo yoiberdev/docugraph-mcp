@@ -402,6 +402,7 @@ async fn test_mcp_document_get_forms_and_filtering() {
             has_forms: true,
             total_form_fields: 3,
             is_tagged: true,
+            ..Default::default()
         },
         pages: vec![Page::new(1, "Page 1"), Page::new(2, "Page 2")],
         sections: vec![],
@@ -440,6 +441,7 @@ async fn test_mcp_document_get_forms_and_filtering() {
                 rect: Some([50.0, 80.0, 65.0, 95.0]),
             },
         ],
+        attachments: vec![],
     };
 
     store.insert(doc).expect("insert should succeed");

@@ -29,6 +29,7 @@ graph TD
     M6["[Hito 6: Benchmark de Contexto y CI/CD Automatizado]<br/>Métricas Precision/Recall vs Tokens & Quality Gates"]:::advanced
     M7["[Hito 7: Extractor de Outlines Nativos & Links]<br/>Navegación /Outlines & Hipervínculos /Annots"]:::advanced
     M8["[Hito 8: Formularios Interactivos y Tagged PDF]<br/>AcroForms, /Kids, Jerarquía & /StructTreeRoot"]:::advanced
+    M9["[Hito 9: Archivos Incrustados y Adjuntos]<br/>/EmbeddedFiles, /AF, /FileAttachment, ZUGFeRD"]:::advanced
 
     M0 --> M1
     M0 --> M2
@@ -40,6 +41,7 @@ graph TD
     M5 --> M6
     M6 --> M7
     M7 --> M8
+    M8 --> M9
 ```
 
 ---
@@ -418,11 +420,58 @@ Hito 8: Formularios Interactivos y Tagged PDF [COMPLETADO]
 
 ---
 
+### 📎 Hito 9: Archivos Incrustados & Adjuntos del PDF (`/EmbeddedFiles`, `/AF`, `/FileAttachment`)
+
+> **Estado:** ✅ **Completado y Certificado**
+> **Debilidad resuelta:**
+> - *Debilidad 8:* Incapacidad de los agentes LLM de acceder a los archivos adjuntos incrustados dentro de documentos PDF (facturas electrónicas ZUGFeRD / Factur-X con XML adjunto, contratos con anexos CSV/JSON, carteras PDF y datasets embebidos).
+
+#### Árbol de Tareas (WBS)
+```text
+Hito 9: Archivos Incrustados y Adjuntos [COMPLETADO]
+├── 9.1 Modelo de Datos de Adjuntos
+│   ├── [x] 9.1.1 `EmbeddedAttachment` struct (`id`, `filename`, `description`, `mime_type`, `size_bytes`, `checksum_md5`, `mod_date`, `is_text`, `page_number`, `data`)
+│   ├── [x] 9.1.2 Extensión de `DocumentMetadata` con `has_attachments` y `total_attachments`
+│   └── [x] 9.1.3 Extensión de `Document` con `attachments: Vec<EmbeddedAttachment>`, `attachments()` y `get_attachment(name_or_id)`
+├── 9.2 Motor de Extracción de Adjuntos e Ingestión
+│   ├── [x] 9.2.1 Travesía de árbol de nombres de catálogo: `/Root /Names /EmbeddedFiles` (arrays `/Names` y nodos jerárquicos `/Kids`)
+│   ├── [x] 9.2.2 Extracción de archivos asociados PDF/A-3 y PDF 2.0: `/Root /AF`
+│   ├── [x] 9.2.3 Extracción de anotaciones a nivel de página: `/Page /Annots /Subtype /FileAttachment`
+│   ├── [x] 9.2.4 Normalización de `/Filespec` (`/UF`, `/F`, `/Desc`, `/EF`)
+│   ├── [x] 9.2.5 Descompresión segura de streams FlateDecode y decodificación de parámetros (`/Size`, `/ModDate`, `/CheckSum`)
+│   └── [x] 9.2.6 Detección de texto plano UTF-8 vs binario
+├── 9.3 Protocolo MCP y CLI
+│   ├── [x] 9.3.1 Nueva herramienta MCP `document_get_attachments` para listado ligero de adjuntos sin saturar tokens
+│   ├── [x] 9.3.2 Nueva herramienta MCP `document_read_attachment` con límite `max_bytes` y soporte UTF-8 / Base64
+│   ├── [x] 9.3.3 Actualización de `document_info` para reportar presencia y total de adjuntos
+│   └── [x] 9.3.4 Subcomando CLI `docugraph attachments <DOCUMENT> [--name <NAME>] [--extract-dir <DIR>] [--format <text|json>]`
+└── 9.4 Verificación y Pruebas Automatizadas
+    ├── [x] 9.4.1 Suite de 5 pruebas dedicadas en `tests/attachments_and_embedded_files_test.rs`
+    └── [x] 9.4.2 73 pruebas pasando en total (`cargo test --all`), 0 advertencias en `clippy`
+```
+
+* **Patrones GoF Aplicados:**
+  - **Composite:** Los árboles de nombres `/EmbeddedFiles` (`/Names` y `/Kids`) y las listas `/AF` se recorren de forma uniforme.
+  - **Adapter:** Desacoplar la fuente del adjunto (Catálogo de Nombres, Anotación de Página, o Array `/AF`) hacia un modelo unificado `EmbeddedAttachment`.
+  - **Strategy / Content Decoder:** Decodificación adaptable según si es texto plano UTF-8 (XML, JSON, CSV, código) o binario con codificación Base64.
+* **Filosofía SpaceX:**
+  - *Paso 1 (Cuestionar):* La mayoría de las herramientas guardan archivos temporales en disco para inspeccionar adjuntos; DocuGraph los procesa en memoria de forma segura y transparente.
+  - *Paso 2 (Eliminar):* Eliminada la sobrecarga de dependencias externas C/C++ para descompresión; usa Rust nativo `lopdf` / `miniz_oxide`.
+  - *Paso 3 (Simplificar/Optimizar):* Deduplicación de streams de adjuntos referenciados tanto en `/Names` como en `/AF`.
+  - *Paso 4 (Acelerar):* Extracción instantánea en $<1\text{ ms}$.
+  - *Paso 5 (Automatizar):* Integración directa en el pipeline de ingesta y preservación en caché en disco.
+* **Resultados de Validación:**
+  - 5 tests dedicados pasando en `tests/attachments_and_embedded_files_test.rs`.
+  - 73 tests totales pasando en la suite.
+  - 100% compliant con `cargo fmt` y `cargo clippy --all-targets -- -D warnings`.
+
+---
+
 ## 📈 3. Matriz de Patrones GoF y su Rol Arquitectónico
 
 | Patrón GoF | Componente en DocuGraph | Problema que resuelve |
 |---|---|---|
-| **Composite** | `DocumentElement` / `SectionNode` / `AcroForm Node` | Representar el árbol jerárquico del documento (secciones, subsecciones, tablas, párrafos), red de hipervínculos y jerarquía de campos AcroForm de forma uniforme. |
+| **Composite** | `DocumentElement` / `SectionNode` / `AcroForm Node` / `EmbeddedFiles NameTree` | Representar el árbol jerárquico del documento (secciones, subsecciones, tablas, párrafos), red de hipervínculos, campos AcroForm y árbol de nombres de archivos adjuntos. |
 | **Strategy** | `ReadingOrderStrategy`, `BudgetStrategy`, `OutlineExtractor` & `HybridRetriever` | Alternar lectura mono/multi-columna; estrategias de presupuesto; alternar extracción de outlines nativos vs tipográficos. |
 | **Chain of Responsibility** | `StreamSecurityPipeline` | Filtrado secuencial de seguridad: desencriptación $\rightarrow$ verificación tipográfica $\rightarrow$ detección de texto invisible. |
 | **Builder** | `MarkdownTableBuilder` & `ContextBuilder` | Construir tablas GFM y fragmentos compactos con presupuestos estrictos paso a paso. |

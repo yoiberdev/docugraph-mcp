@@ -417,6 +417,7 @@ pub fn create_benchmark_sample_document() -> Document {
         has_forms: false,
         total_form_fields: 0,
         is_tagged: false,
+        ..Default::default()
     });
 
     // Page 1: Strategy Pattern Deep Dive

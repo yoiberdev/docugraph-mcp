@@ -402,6 +402,11 @@ pub fn load_pdf_from_path_with_password(
     let tagged_info = super::tagged::detect_tagged_pdf_structure(&pdf_doc);
     let is_tagged = tagged_info.is_tagged;
 
+    // Extract embedded files and attachments
+    let attachments = super::attachments::extract_document_attachments(&pdf_doc, &page_map);
+    let total_attachments = attachments.len() as u32;
+    let has_attachments = !attachments.is_empty();
+
     // Determine document title from file stem or metadata
     let file_stem = path
         .file_stem()
@@ -431,6 +436,8 @@ pub fn load_pdf_from_path_with_password(
         has_forms,
         total_form_fields,
         is_tagged,
+        has_attachments,
+        total_attachments,
     };
 
     info!(
@@ -440,11 +447,12 @@ pub fn load_pdf_from_path_with_password(
         pages = pages.len(),
         links = total_links,
         forms = total_form_fields,
+        attachments = total_attachments,
         is_tagged = is_tagged,
         is_encrypted = is_encrypted,
         untrusted_text_detected = doc_untrusted_detected,
         scanned_pages_count = scanned_pages_count,
-        "PDF ingestion, link & form extraction, security scan, and outline resolution complete"
+        "PDF ingestion, link, form & attachment extraction, security scan, and outline resolution complete"
     );
 
     Ok(Document {
@@ -453,6 +461,7 @@ pub fn load_pdf_from_path_with_password(
         pages,
         sections,
         forms,
+        attachments,
     })
 }
 

@@ -141,6 +141,10 @@ pub struct DocumentInfoResult {
     pub total_form_fields: u32,
     #[serde(default)]
     pub is_tagged: bool,
+    #[serde(default)]
+    pub has_attachments: bool,
+    #[serde(default)]
+    pub total_attachments: u32,
 }
 
 /// Outline node returned by `document_outline`.
@@ -262,4 +266,67 @@ pub struct DocumentGetFormsResult {
     pub document_id: String,
     pub total_fields: usize,
     pub fields: Vec<FormFieldResult>,
+}
+
+/// Parameters for `document_get_attachments`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentGetAttachmentsParams {
+    /// Document identifier or content hash
+    pub document_id: String,
+}
+
+/// Metadata summary of an embedded file attachment.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AttachmentSummaryResult {
+    /// Identifier of the attachment (e.g. "att_factur-x.xml")
+    pub id: String,
+    /// Filename
+    pub filename: String,
+    /// Human-readable description if present
+    pub description: Option<String>,
+    /// MIME type if present (e.g. "text/xml", "application/pdf")
+    pub mime_type: Option<String>,
+    /// File size in bytes
+    pub size_bytes: u64,
+    /// MD5 checksum if specified
+    pub checksum_md5: Option<String>,
+    /// Modification date if specified
+    pub mod_date: Option<String>,
+    /// Whether the file content is valid UTF-8 text
+    pub is_text: bool,
+    /// 1-based page number if associated with a page annotation
+    pub page_number: Option<u32>,
+}
+
+/// Complete result returned by `document_get_attachments`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentGetAttachmentsResult {
+    pub document_id: String,
+    pub total_attachments: usize,
+    pub attachments: Vec<AttachmentSummaryResult>,
+}
+
+/// Parameters for `document_read_attachment`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentReadAttachmentParams {
+    /// Document identifier or content hash
+    pub document_id: String,
+    /// Filename or attachment identifier to read
+    pub name_or_id: String,
+    /// Maximum bytes of content to return (default: 524288 = 512KB)
+    pub max_bytes: Option<usize>,
+    /// Force output encoding: "text" (UTF-8, default if text) or "base64"
+    pub encoding: Option<String>,
+}
+
+/// Result returned by `document_read_attachment`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentReadAttachmentResult {
+    pub document_id: String,
+    pub filename: String,
+    pub mime_type: Option<String>,
+    pub size_bytes: u64,
+    pub encoding: String,
+    pub content: String,
+    pub truncated: bool,
 }

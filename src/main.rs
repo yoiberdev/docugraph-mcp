@@ -105,6 +105,20 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Extract and inspect embedded file attachments (e.g. ZUGFeRD XML, CSV, datasets)
+    Attachments {
+        /// Document identifier or filesystem path to PDF
+        document: String,
+        /// Optional specific attachment filename or ID to inspect or extract
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Optional directory path to extract and save the attachment(s)
+        #[arg(short, long)]
+        extract_dir: Option<String>,
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[tokio::main]
@@ -224,6 +238,12 @@ async fn main() -> anyhow::Result<()> {
                 if doc.metadata.is_tagged {
                     eprintln!("  🏷️ Tagged PDF:  Sí (Estructura semántica /StructTreeRoot)");
                 }
+                if doc.metadata.has_attachments {
+                    eprintln!(
+                        "  📎 Adjuntos:    {} archivo(s) incrustado(s)",
+                        doc.metadata.total_attachments
+                    );
+                }
                 eprintln!("\n🌳 Document Outline:");
                 print_outline_tree(&doc.sections, 0);
                 eprintln!();
@@ -313,6 +333,10 @@ async fn main() -> anyhow::Result<()> {
                     } else {
                         "No"
                     }
+                );
+                eprintln!(
+                    "  Adjuntos:  {} archivo(s) incrustado(s)",
+                    doc.metadata.total_attachments
                 );
                 eprintln!("\n🌳 Outline Preview:");
                 print_outline_tree(&doc.sections, 0);
@@ -645,6 +669,148 @@ async fn main() -> anyhow::Result<()> {
                                 val_desc,
                                 flags_desc,
                                 rect_desc
+                            );
+                        }
+                        eprintln!();
+                    }
+                }
+            } else {
+                eprintln!("Document not found: {}", document);
+            }
+        }
+        Commands::Attachments {
+            document,
+            name,
+            extract_dir,
+            format,
+        } => {
+            info!(target: "cli", document = %document, "Inspecting embedded file attachments");
+            let doc = if let Some(d) = store.get(&document) {
+                Some(d)
+            } else {
+                let path = std::path::Path::new(&document);
+                if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+                    Some(docugraph::document::load_pdf_from_path(path)?)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(doc) = doc {
+                if let Some(target_name) = name {
+                    if let Some(att) = doc.get_attachment(&target_name) {
+                        if let Some(ref dir) = extract_dir {
+                            std::fs::create_dir_all(dir)?;
+                            let out_path = std::path::Path::new(dir).join(&att.filename);
+                            std::fs::write(&out_path, &att.data)?;
+                            eprintln!(
+                                "💾 Extracted attachment '{}' to: {}",
+                                att.filename,
+                                out_path.display()
+                            );
+                        } else if format.eq_ignore_ascii_case("json") {
+                            use base64::Engine;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&att.data);
+                            let res = docugraph::mcp::DocumentReadAttachmentResult {
+                                document_id: doc.id.0.clone(),
+                                filename: att.filename.clone(),
+                                mime_type: att.mime_type.clone(),
+                                size_bytes: att.size_bytes,
+                                encoding: if att.is_text {
+                                    "text".to_string()
+                                } else {
+                                    "base64".to_string()
+                                },
+                                content: if att.is_text {
+                                    String::from_utf8_lossy(&att.data).to_string()
+                                } else {
+                                    b64
+                                },
+                                truncated: false,
+                            };
+                            println!("{}", serde_json::to_string_pretty(&res)?);
+                        } else if att.is_text {
+                            println!("{}", String::from_utf8_lossy(&att.data));
+                        } else {
+                            eprintln!(
+                                "Binary attachment: {} ({} bytes, mime: {:?})",
+                                att.filename, att.size_bytes, att.mime_type
+                            );
+                            eprintln!(
+                                "To extract, use: docugraph attachments \"{}\" --name \"{}\" --extract-dir <dir>",
+                                document, att.filename
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "Attachment '{}' not found in document '{}'.",
+                            target_name, document
+                        );
+                    }
+                } else if let Some(ref dir) = extract_dir {
+                    std::fs::create_dir_all(dir)?;
+                    for att in &doc.attachments {
+                        let out_path = std::path::Path::new(dir).join(&att.filename);
+                        std::fs::write(&out_path, &att.data)?;
+                        eprintln!("💾 Extracted '{}' ({} bytes)", att.filename, att.size_bytes);
+                    }
+                    eprintln!(
+                        "✅ Extracted {} attachment(s) to: {}",
+                        doc.attachments.len(),
+                        dir
+                    );
+                } else if format.eq_ignore_ascii_case("json") {
+                    let summaries: Vec<docugraph::mcp::AttachmentSummaryResult> = doc
+                        .attachments
+                        .iter()
+                        .map(|att| docugraph::mcp::AttachmentSummaryResult {
+                            id: att.id.clone(),
+                            filename: att.filename.clone(),
+                            description: att.description.clone(),
+                            mime_type: att.mime_type.clone(),
+                            size_bytes: att.size_bytes,
+                            checksum_md5: att.checksum_md5.clone(),
+                            mod_date: att.mod_date.clone(),
+                            is_text: att.is_text,
+                            page_number: att.page_number,
+                        })
+                        .collect();
+
+                    let res = docugraph::mcp::DocumentGetAttachmentsResult {
+                        document_id: doc.id.0.clone(),
+                        total_attachments: summaries.len(),
+                        attachments: summaries,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    eprintln!(
+                        "\n📎 Embedded File Attachments for '{}':",
+                        doc.metadata.title
+                    );
+                    eprintln!("  Total Attachments: {}", doc.attachments.len());
+                    if doc.attachments.is_empty() {
+                        eprintln!("  No embedded file attachments found.");
+                    } else {
+                        eprintln!();
+                        for (idx, att) in doc.attachments.iter().enumerate() {
+                            let mime = att
+                                .mime_type
+                                .as_deref()
+                                .unwrap_or("application/octet-stream");
+                            let kind = if att.is_text { "Text" } else { "Binary" };
+                            let desc = att
+                                .description
+                                .as_deref()
+                                .map(|d| format!(" ({})", d))
+                                .unwrap_or_default();
+                            eprintln!(
+                                "  [{}] {:<30} | {:>8} bytes | {:<6} | {}{}",
+                                idx + 1,
+                                att.filename,
+                                att.size_bytes,
+                                kind,
+                                mime,
+                                desc
                             );
                         }
                         eprintln!();
