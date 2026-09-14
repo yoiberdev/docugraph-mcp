@@ -3,7 +3,9 @@
 //! The PDFs are synthesised in memory and mimic LaTeX/hyperref output: bookmarks use
 //! `/A << /S /GoTo /D (name) >>` and the names live in a multi-level `/Names /Dests` tree.
 
-use docugraph::document::{SectionNode, load_pdf_from_path, resolve_dest};
+use docugraph::document::{
+    NativeOutlineExtractor, OutlineExtractor, SectionNode, load_pdf_from_path, resolve_dest,
+};
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document as LopdfDoc, Object, ObjectId, Stream, StringFormat, dictionary};
 use std::collections::HashMap;
@@ -262,4 +264,37 @@ fn test_named_destination_is_never_read_as_page_index() {
     );
     // "7" is not a destination: it must not be guessed as page 8 (index 7 + 1)
     assert_eq!(resolve_dest(&doc, &text("7"), &map), None);
+}
+
+/// Assert that every node's parent_id names the node containing it; returns how many were checked.
+fn assert_parent_links(nodes: &[SectionNode], parent: Option<&str>) -> usize {
+    let mut checked = 0;
+    for node in nodes {
+        assert_eq!(
+            node.parent_id.as_deref(),
+            parent,
+            "wrong parent_id for '{}'",
+            node.title
+        );
+        checked += 1 + assert_parent_links(&node.children, Some(&node.id));
+    }
+    checked
+}
+
+#[test]
+fn test_native_outline_siblings_keep_parent_id() {
+    let (doc, _, _) = outline_fixture();
+    let sections = NativeOutlineExtractor.extract(&doc, &page_map(&doc), &[], 12);
+
+    let chapter_one = &sections[1];
+    let titles: Vec<&str> = chapter_one
+        .children
+        .iter()
+        .map(|child| child.title.as_str())
+        .collect();
+    assert_eq!(
+        titles,
+        vec!["Section one A", "Section one B", "Section one C"]
+    );
+    assert_eq!(assert_parent_links(&sections, None), OUTLINE.len());
 }

@@ -1,9 +1,9 @@
 //! Outline and bookmarks extraction strategy implementations (GoF Strategy Pattern).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
-use super::links::{object_to_string, resolve_dest};
+use super::links::{MAX_TREE_DEPTH, object_to_string, resolve_dest};
 use super::model::{Page, SectionNode};
 use super::structure::{infer_sections_from_pages, slugify_title};
 
@@ -57,7 +57,15 @@ impl OutlineExtractor for NativeOutlineExtractor {
             .ok()
             .and_then(|r| r.as_reference().ok())
         {
-            traverse_outline_items(doc, item_id, 1, None, page_map, &mut sections);
+            traverse_outline_items(
+                doc,
+                item_id,
+                1,
+                None,
+                page_map,
+                &mut sections,
+                &mut HashSet::new(),
+            );
         }
 
         sections
@@ -131,64 +139,76 @@ impl OutlineExtractor for FallbackOutlineStrategy {
     }
 }
 
-/// Recursively traverse outline items following Next and First links.
+/// Walk a chain of sibling outline items (following /Next) and recurse into their children (/First).
+///
+/// Every item in the chain gets the same `parent_id`. Items already visited are skipped, so a
+/// malformed /Next or /First cycle cannot loop forever.
 fn traverse_outline_items(
     doc: &lopdf::Document,
-    item_id: (u32, u16),
+    first_item_id: (u32, u16),
     level: u32,
-    parent_id: Option<String>,
+    parent_id: Option<&str>,
     page_map: &HashMap<(u32, u16), u32>,
     acc: &mut Vec<SectionNode>,
+    visited: &mut HashSet<(u32, u16)>,
 ) {
-    let Ok(item_dict) = doc.get_dictionary(item_id) else {
+    if level as usize > MAX_TREE_DEPTH {
         return;
-    };
-
-    let title = item_dict
-        .get(b"Title")
-        .ok()
-        .and_then(object_to_string)
-        .unwrap_or_else(|| "Untitled Section".to_string());
-
-    let page_target = resolve_outline_page(doc, item_dict, page_map).unwrap_or(1);
-    let sec_id = format!("{}-p{}", slugify_title(&title), page_target);
-
-    let mut node = SectionNode {
-        id: sec_id.clone(),
-        title,
-        level,
-        page_start: page_target,
-        page_end: page_target,
-        parent_id,
-        children: Vec::new(),
-        content_preview: String::new(),
-    };
-
-    // Traverse child items if any
-    if let Some(child_id) = item_dict
-        .get(b"First")
-        .ok()
-        .and_then(|r| r.as_reference().ok())
-    {
-        traverse_outline_items(
-            doc,
-            child_id,
-            level + 1,
-            Some(sec_id),
-            page_map,
-            &mut node.children,
-        );
     }
 
-    acc.push(node);
+    let mut next_item = Some(first_item_id);
+    while let Some(item_id) = next_item.take() {
+        if !visited.insert(item_id) {
+            break;
+        }
+        let Ok(item_dict) = doc.get_dictionary(item_id) else {
+            break;
+        };
 
-    // Traverse sibling items
-    if let Some(next_id) = item_dict
-        .get(b"Next")
-        .ok()
-        .and_then(|r| r.as_reference().ok())
-    {
-        traverse_outline_items(doc, next_id, level, None, page_map, acc);
+        let title = item_dict
+            .get(b"Title")
+            .ok()
+            .and_then(object_to_string)
+            .unwrap_or_else(|| "Untitled Section".to_string());
+
+        let page_target = resolve_outline_page(doc, item_dict, page_map).unwrap_or(1);
+        let sec_id = format!("{}-p{}", slugify_title(&title), page_target);
+
+        let mut node = SectionNode {
+            id: sec_id.clone(),
+            title,
+            level,
+            page_start: page_target,
+            page_end: page_target,
+            parent_id: parent_id.map(str::to_string),
+            children: Vec::new(),
+            content_preview: String::new(),
+        };
+
+        // Traverse child items if any
+        if let Some(child_id) = item_dict
+            .get(b"First")
+            .ok()
+            .and_then(|r| r.as_reference().ok())
+        {
+            traverse_outline_items(
+                doc,
+                child_id,
+                level + 1,
+                Some(&sec_id),
+                page_map,
+                &mut node.children,
+                visited,
+            );
+        }
+
+        acc.push(node);
+
+        // Continue with the next sibling, which shares this item's parent
+        next_item = item_dict
+            .get(b"Next")
+            .ok()
+            .and_then(|r| r.as_reference().ok());
     }
 }
 
