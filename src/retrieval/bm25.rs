@@ -30,6 +30,32 @@ pub struct SearchUnit {
     pub text: String,
     pub term_counts: HashMap<String, u32>,
     pub length: usize,
+    /// Where each page's text starts inside `text`, to cite the page a snippet comes from
+    #[serde(default)]
+    pub page_spans: Vec<PageSpan>,
+}
+
+/// Start of one page's text inside a [`SearchUnit`]'s `text`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageSpan {
+    /// Byte offset in `SearchUnit::text` where the page text starts
+    pub offset: usize,
+    /// 1-based page number
+    pub page: u32,
+}
+
+impl SearchUnit {
+    /// Page that contains byte offset `pos` of `text`.
+    ///
+    /// Offsets before the first page (a section's title line) belong to the first page.
+    pub fn page_at(&self, pos: usize) -> u32 {
+        self.page_spans
+            .iter()
+            .rev()
+            .find(|span| span.offset <= pos)
+            .or_else(|| self.page_spans.first())
+            .map_or(self.page_start, |span| span.page)
+    }
 }
 
 /// In-memory inverted index implementing Okapi BM25 ranking.
@@ -52,6 +78,8 @@ pub struct SearchHit {
     pub page_end: u32,
     pub section_id: Option<String>,
     pub snippet: String,
+    /// Page the snippet was taken from; for a section, the page inside its range that matched
+    pub snippet_page: u32,
     pub score: f32,
 }
 
@@ -85,6 +113,10 @@ impl Bm25Index {
                         text: text.to_string(),
                         term_counts,
                         length,
+                        page_spans: vec![PageSpan {
+                            offset: 0,
+                            page: page.page_number,
+                        }],
                     });
                 }
             }
@@ -154,6 +186,7 @@ impl Bm25Index {
             .take(limit)
             .map(|(idx, score)| {
                 let unit = &self.units[idx];
+                let (snippet, match_pos) = extract_snippet(&unit.text, &query_terms, 250);
                 SearchHit {
                     unit_id: unit.id.clone(),
                     document_id: unit.document_id.clone(),
@@ -161,7 +194,8 @@ impl Bm25Index {
                     page_start: unit.page_start,
                     page_end: unit.page_end,
                     section_id: unit.section_id.clone(),
-                    snippet: extract_snippet(&unit.text, &query_terms, 250),
+                    snippet,
+                    snippet_page: unit.page_at(match_pos),
                     score,
                 }
             })
@@ -171,8 +205,13 @@ impl Bm25Index {
 
 fn collect_section_units(doc: &Document, section: &SectionNode, units: &mut Vec<SearchUnit>) {
     let mut combined_text = format!("{}\n", section.title);
+    let mut page_spans = Vec::new();
     for p in section.page_start..=section.page_end {
         if let Some(page) = doc.get_page(p) {
+            page_spans.push(PageSpan {
+                offset: combined_text.len(),
+                page: p,
+            });
             combined_text.push_str(&page.text);
             combined_text.push('\n');
         }
@@ -192,6 +231,7 @@ fn collect_section_units(doc: &Document, section: &SectionNode, units: &mut Vec<
         text: combined_text,
         term_counts,
         length,
+        page_spans,
     });
 
     for child in &section.children {
@@ -223,7 +263,9 @@ fn count_terms(tokens: &[String]) -> HashMap<String, u32> {
 }
 
 /// Extract a contextual snippet around matching terms, safely respecting UTF-8 boundaries.
-fn extract_snippet(text: &str, query_terms: &[String], max_chars: usize) -> String {
+///
+/// Returns the snippet and the byte offset of the matched term (0 when no term matched).
+fn extract_snippet(text: &str, query_terms: &[String], max_chars: usize) -> (String, usize) {
     let lower = text.to_lowercase();
     let mut best_pos = 0;
 
@@ -255,7 +297,7 @@ fn extract_snippet(text: &str, query_terms: &[String], max_chars: usize) -> Stri
         snippet = format!("{} ...", snippet);
     }
 
-    snippet
+    (snippet, best_pos)
 }
 
 fn get_stop_words() -> HashSet<&'static str> {

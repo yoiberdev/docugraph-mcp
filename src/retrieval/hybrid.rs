@@ -35,6 +35,8 @@ pub struct HybridSearchHit {
     pub page_end: u32,
     pub section_id: Option<String>,
     pub snippet: String,
+    /// Page the snippet was taken from; for a section, the page inside its range that matched
+    pub snippet_page: u32,
     pub final_score: f32,
     pub bm25_score: f32,
     pub semantic_score: f32,
@@ -147,10 +149,11 @@ impl HybridRetriever {
 
             // Include if there is any meaningful relevance
             if final_score > 0.05 {
-                let snippet = if let Some((_, hit)) = bm25_map.get(unit.id.as_str()) {
-                    hit.snippet.clone()
+                let (snippet, snippet_page) = if let Some((_, hit)) = bm25_map.get(unit.id.as_str())
+                {
+                    (hit.snippet.clone(), hit.snippet_page)
                 } else {
-                    unit.text.chars().take(200).collect()
+                    (unit.text.chars().take(200).collect(), unit.page_at(0))
                 };
 
                 scored_hits.push(HybridSearchHit {
@@ -161,6 +164,7 @@ impl HybridRetriever {
                     page_end: unit.page_end,
                     section_id: unit.section_id.clone(),
                     snippet,
+                    snippet_page,
                     final_score,
                     bm25_score: bm25_raw,
                     semantic_score,
