@@ -107,16 +107,19 @@ impl DocuGraphServer {
         Ok(())
     }
 
-    /// Helper to fetch a target document or all loaded documents.
-    fn get_documents(&self, doc_id: Option<&str>) -> Vec<Document> {
-        if let Some(doc) = doc_id.and_then(|id| self.store.get(id)) {
-            return vec![doc];
+    /// Documents to search: the one named by `doc_id`, or every indexed document.
+    ///
+    /// An unknown `doc_id` is an error listing the available ids. It used to fall back to
+    /// searching every document, which hid typos behind results from the wrong book.
+    fn get_documents(&self, doc_id: Option<&str>) -> Result<Vec<Document>, ToolError> {
+        if let Some(id) = doc_id {
+            return self.require_document(id).map(|doc| vec![doc]);
         }
         let metas = self.store.list_documents();
-        metas
+        Ok(metas
             .into_iter()
             .filter_map(|m| self.store.get(&m.id))
-            .collect()
+            .collect())
     }
 
     /// Fetch a document by id or content hash, or explain which ids exist.
@@ -261,7 +264,7 @@ impl DocuGraphServer {
     )]
     pub async fn document_search(&self, params: Parameters<DocumentSearchParams>) -> ToolResult {
         let limit = params.0.limit.unwrap_or(5);
-        let docs = self.get_documents(params.0.document_id.as_deref());
+        let docs = self.get_documents(params.0.document_id.as_deref())?;
         if docs.is_empty() {
             return Ok("No documents available for search.".to_string());
         }
@@ -281,7 +284,7 @@ impl DocuGraphServer {
         params: Parameters<DocumentSearchHybridParams>,
     ) -> ToolResult {
         let limit = params.0.limit.unwrap_or(5);
-        let docs = self.get_documents(params.0.document_id.as_deref());
+        let docs = self.get_documents(params.0.document_id.as_deref())?;
         if docs.is_empty() {
             return Ok("No documents available for search.".to_string());
         }
@@ -335,7 +338,7 @@ impl DocuGraphServer {
         params: Parameters<DocumentGetContextParams>,
     ) -> ToolResult {
         let query = &params.0.query;
-        let docs = self.get_documents(params.0.document_id.as_deref());
+        let docs = self.get_documents(params.0.document_id.as_deref())?;
         if docs.is_empty() {
             return Ok("No documents available for context expansion.".to_string());
         }
@@ -363,7 +366,7 @@ impl DocuGraphServer {
         params: Parameters<DocumentGetEvidenceParams>,
     ) -> ToolResult {
         let query = &params.0.query;
-        let docs = self.get_documents(params.0.document_id.as_deref());
+        let docs = self.get_documents(params.0.document_id.as_deref())?;
         if docs.is_empty() {
             return Ok("No documents available for evidence collection.".to_string());
         }

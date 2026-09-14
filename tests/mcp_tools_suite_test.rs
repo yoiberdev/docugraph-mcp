@@ -1,5 +1,5 @@
 use docugraph::document::model::{Document, DocumentMetadata, Page, SectionNode};
-use docugraph::mcp::{DocuGraphServer, tools::*};
+use docugraph::mcp::{DocuGraphServer, ToolResult, tools::*};
 use docugraph::storage::DocumentStore;
 use rmcp::handler::server::tool::IntoCallToolResult;
 use rmcp::handler::server::wrapper::Parameters;
@@ -302,4 +302,80 @@ async fn test_mcp_tool_error_is_sent_with_is_error() {
     assert_eq!(wire["isError"], true);
     let text = wire["content"][0]["text"].as_str().expect("text content");
     assert!(text.contains("'missing-doc' not found"), "{text}");
+}
+
+#[tokio::test]
+async fn test_mcp_search_tools_reject_unknown_document_id() {
+    let server = create_test_server();
+    let typo = Some("git-gide".to_string());
+
+    let check = |tool: &str, result: ToolResult| {
+        let err = result.expect_err(tool);
+        assert!(
+            err.message().contains("'git-gide' not found"),
+            "{tool}: {err}"
+        );
+        assert!(
+            err.message().contains("'git-guide'"),
+            "{tool} should list the available ids: {err}"
+        );
+    };
+
+    check(
+        "document_search",
+        server
+            .document_search(Parameters(DocumentSearchParams {
+                query: "ramas locales".to_string(),
+                document_id: typo.clone(),
+                limit: None,
+            }))
+            .await,
+    );
+    check(
+        "document_search_hybrid",
+        server
+            .document_search_hybrid(Parameters(DocumentSearchHybridParams {
+                query: "ramas locales".to_string(),
+                document_id: typo.clone(),
+                limit: None,
+                bm25_weight: None,
+                semantic_weight: None,
+                structural_weight: None,
+            }))
+            .await,
+    );
+    check(
+        "document_get_context",
+        server
+            .document_get_context(Parameters(DocumentGetContextParams {
+                query: "ramas locales".to_string(),
+                document_id: typo.clone(),
+                max_tokens: None,
+                max_chunks: None,
+            }))
+            .await,
+    );
+    check(
+        "document_get_evidence",
+        server
+            .document_get_evidence(Parameters(DocumentGetEvidenceParams {
+                query: "ramas locales".to_string(),
+                document_id: typo,
+                max_tokens: None,
+                max_items: None,
+            }))
+            .await,
+    );
+
+    // Without document_id the search still covers every indexed document.
+    let hits = server
+        .document_search(Parameters(DocumentSearchParams {
+            query: "ramas locales".to_string(),
+            document_id: None,
+            limit: Some(3),
+        }))
+        .await
+        .expect("search without document_id");
+    let hits: serde_json::Value = serde_json::from_str(&hits).expect("valid JSON hits");
+    assert_eq!(hits[0]["document_id"], "git-guide");
 }

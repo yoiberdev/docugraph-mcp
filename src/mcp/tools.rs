@@ -31,7 +31,7 @@ pub struct DocumentOutlineParams {
 pub struct DocumentSearchParams {
     /// Search keywords or technical terms
     pub query: String,
-    /// Optional filter for a specific document ID
+    /// Optional filter for a specific document ID (unknown IDs return an error)
     pub document_id: Option<String>,
     /// Maximum number of results to return (default: 5)
     pub limit: Option<usize>,
@@ -42,7 +42,7 @@ pub struct DocumentSearchParams {
 pub struct DocumentSearchHybridParams {
     /// Conceptual or natural language query
     pub query: String,
-    /// Optional filter for a specific document ID
+    /// Optional filter for a specific document ID (unknown IDs return an error)
     pub document_id: Option<String>,
     /// Maximum number of results to return (default: 5)
     pub limit: Option<usize>,
@@ -72,7 +72,7 @@ pub struct DocumentGetSectionParams {
 pub struct DocumentGetContextParams {
     /// Target topic, concept, or section title
     pub query: String,
-    /// Optional document identifier filter
+    /// Optional document identifier filter (unknown IDs return an error)
     pub document_id: Option<String>,
     /// Maximum estimated tokens in the response (default: 1500)
     pub max_tokens: Option<usize>,
@@ -85,7 +85,7 @@ pub struct DocumentGetContextParams {
 pub struct DocumentGetEvidenceParams {
     /// Claim, assertion, or question to gather verifiable evidence for
     pub query: String,
-    /// Optional document identifier filter
+    /// Optional document identifier filter (unknown IDs return an error)
     pub document_id: Option<String>,
     /// Maximum tokens budget for evidence (default: 1200)
     pub max_tokens: Option<usize>,
