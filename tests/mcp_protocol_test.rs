@@ -51,6 +51,7 @@ async fn test_document_list_tool() {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
     server.register_document(doc).await;
 
@@ -84,6 +85,7 @@ async fn test_document_info_tool() {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
     server.register_document(doc).await;
 

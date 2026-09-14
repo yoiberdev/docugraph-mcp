@@ -86,6 +86,7 @@ fn test_cached_page_renderer_proxy_hit_and_miss() {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
 
     let mut p1 = Page::new(1, "Page 1 digital text with high density content.");
@@ -139,6 +140,7 @@ async fn test_mcp_document_render_page_tool() {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
     doc.add_page(Page::new(1, "Page 1 Content with architecture diagram."));
     server.register_document(doc).await;

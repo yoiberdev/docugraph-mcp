@@ -190,6 +190,9 @@ impl DocuGraphServer {
                 scanned_pages_count: doc.metadata.scanned_pages_count,
                 scan_warning,
                 total_links: doc.metadata.total_links,
+                has_forms: doc.metadata.has_forms,
+                total_form_fields: doc.metadata.total_form_fields,
+                is_tagged: doc.metadata.is_tagged,
             };
             serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
         } else {
@@ -208,6 +211,9 @@ impl DocuGraphServer {
                 scanned_pages_count: 0,
                 scan_warning: None,
                 total_links: 0,
+                has_forms: false,
+                total_form_fields: 0,
+                is_tagged: false,
             })
             .unwrap_or_else(|_| "{}".to_string())
         }
@@ -513,6 +519,67 @@ impl DocuGraphServer {
                 "document_id": doc_id,
                 "total_links": 0,
                 "links": []
+            })
+            .to_string()
+        }
+    }
+
+    /// Extract interactive form fields (AcroForms) from a document.
+    #[tool(
+        name = "document_get_forms",
+        description = "Extract interactive AcroForm fields (text inputs, checkboxes, radio buttons, dropdowns) with names, values, and page coordinates."
+    )]
+    pub async fn document_get_forms(&self, params: Parameters<DocumentGetFormsParams>) -> String {
+        let doc_id = &params.0.document_id;
+        let page_filter = params.0.page;
+        let filled_only = params.0.filled_only.unwrap_or(false);
+
+        if let Some(doc) = self.store.get(doc_id) {
+            let mut results = Vec::new();
+
+            for field in &doc.forms {
+                if page_filter.is_some_and(|target_p| field.page_number != Some(target_p)) {
+                    continue;
+                }
+
+                if filled_only
+                    && field
+                        .value
+                        .as_deref()
+                        .map(|v| v.trim().is_empty())
+                        .unwrap_or(true)
+                {
+                    continue;
+                }
+
+                let type_str = field.field_type.as_str();
+
+                results.push(FormFieldResult {
+                    name: field.name.clone(),
+                    fully_qualified_name: field.fully_qualified_name.clone(),
+                    field_type: type_str.to_string(),
+                    value: field.value.clone(),
+                    default_value: field.default_value.clone(),
+                    read_only: field.read_only,
+                    required: field.required,
+                    page_number: field.page_number,
+                    rect: field.rect,
+                });
+            }
+
+            let response = DocumentGetFormsResult {
+                document_id: doc_id.clone(),
+                total_fields: results.len(),
+                fields: results,
+            };
+
+            serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            serde_json::json!({
+                "error": format!("Document '{doc_id}' not found."),
+                "document_id": doc_id,
+                "total_fields": 0,
+                "fields": []
             })
             .to_string()
         }

@@ -1,5 +1,6 @@
 //! Document ingestion, layout models, and provenance tracking.
 
+pub mod forms;
 pub mod layout;
 pub mod links;
 pub mod model;
@@ -8,7 +9,9 @@ pub mod parser;
 pub mod provenance;
 pub mod structure;
 pub mod table;
+pub mod tagged;
 
+pub use forms::extract_document_forms;
 pub use layout::{
     BoundingBox, MultiColumnSpatialFlow, ReadingOrderStrategy, SingleColumnFlow, TextFragment,
     TextLine, extract_page_text_spatial,
@@ -18,7 +21,8 @@ pub use links::{
     resolve_named_destination,
 };
 pub use model::{
-    Document, DocumentId, DocumentLink, DocumentMetadata, LinkTarget, Page, PageKind, SectionNode,
+    Document, DocumentId, DocumentLink, DocumentMetadata, FormField, FormFieldType, LinkTarget,
+    Page, PageKind, SectionNode,
 };
 pub use outline_strategy::{
     FallbackOutlineStrategy, NativeOutlineExtractor, OutlineExtractor, TypographicOutlineExtractor,
@@ -32,3 +36,4 @@ pub use table::{
     MarkdownTableBuilder, TableAlignment, TableStructureVisitor, reconstruct_tables_in_text,
     split_line_into_cells,
 };
+pub use tagged::{TaggedPdfInfo, detect_tagged_pdf_structure};

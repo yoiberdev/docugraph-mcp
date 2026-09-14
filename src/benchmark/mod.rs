@@ -414,6 +414,9 @@ pub fn create_benchmark_sample_document() -> Document {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        has_forms: false,
+        total_form_fields: 0,
+        is_tagged: false,
     });
 
     // Page 1: Strategy Pattern Deep Dive

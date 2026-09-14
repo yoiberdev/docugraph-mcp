@@ -393,6 +393,15 @@ pub fn load_pdf_from_path_with_password(
     let outline_strategy = FallbackOutlineStrategy::new();
     let sections = outline_strategy.extract(&pdf_doc, &page_map, &pages, total_pages);
 
+    // Extract interactive AcroForm fields
+    let forms = super::forms::extract_document_forms(&pdf_doc, &page_map);
+    let total_form_fields = forms.len() as u32;
+    let has_forms = !forms.is_empty();
+
+    // Discover Tagged PDF logical structure tree
+    let tagged_info = super::tagged::detect_tagged_pdf_structure(&pdf_doc);
+    let is_tagged = tagged_info.is_tagged;
+
     // Determine document title from file stem or metadata
     let file_stem = path
         .file_stem()
@@ -419,6 +428,9 @@ pub fn load_pdf_from_path_with_password(
         scanned_pages_count,
         source_path: Some(path.to_string_lossy().to_string()),
         total_links,
+        has_forms,
+        total_form_fields,
+        is_tagged,
     };
 
     info!(
@@ -427,10 +439,12 @@ pub fn load_pdf_from_path_with_password(
         sections = sections.len(),
         pages = pages.len(),
         links = total_links,
+        forms = total_form_fields,
+        is_tagged = is_tagged,
         is_encrypted = is_encrypted,
         untrusted_text_detected = doc_untrusted_detected,
         scanned_pages_count = scanned_pages_count,
-        "PDF ingestion, link extraction, security scan, and outline resolution complete"
+        "PDF ingestion, link & form extraction, security scan, and outline resolution complete"
     );
 
     Ok(Document {
@@ -438,6 +452,7 @@ pub fn load_pdf_from_path_with_password(
         metadata,
         pages,
         sections,
+        forms,
     })
 }
 

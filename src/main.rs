@@ -91,6 +91,20 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Extract interactive form fields (AcroForms) and their values
+    Forms {
+        /// Document identifier or filesystem path to PDF
+        document: String,
+        /// Optional page number filter (1-based)
+        #[arg(short, long)]
+        page: Option<u32>,
+        /// Filter to only fields that contain a non-empty value
+        #[arg(long)]
+        filled_only: bool,
+        /// Output format: text or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[tokio::main]
@@ -201,6 +215,15 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     eprintln!("  📷 Escaneado:   No (Documento digital)");
                 }
+                if doc.metadata.has_forms {
+                    eprintln!(
+                        "  📋 Formularios: {} campo(s) interactivo(s) AcroForm",
+                        doc.metadata.total_form_fields
+                    );
+                }
+                if doc.metadata.is_tagged {
+                    eprintln!("  🏷️ Tagged PDF:  Sí (Estructura semántica /StructTreeRoot)");
+                }
                 eprintln!("\n🌳 Document Outline:");
                 print_outline_tree(&doc.sections, 0);
                 eprintln!();
@@ -282,6 +305,15 @@ async fn main() -> anyhow::Result<()> {
                     }
                 );
                 eprintln!("  Links:     {}", doc.metadata.total_links);
+                eprintln!("  Forms:     {} field(s)", doc.metadata.total_form_fields);
+                eprintln!(
+                    "  Tagged:    {}",
+                    if doc.metadata.is_tagged {
+                        "Yes (Semantic StructTreeRoot / PDF/UA)"
+                    } else {
+                        "No"
+                    }
+                );
                 eprintln!("\n🌳 Outline Preview:");
                 print_outline_tree(&doc.sections, 0);
             } else {
@@ -512,6 +544,106 @@ async fn main() -> anyhow::Result<()> {
                                 link.page_number,
                                 kind_desc,
                                 target_desc,
+                                rect_desc
+                            );
+                        }
+                        eprintln!();
+                    }
+                }
+            } else {
+                eprintln!("Document not found: {}", document);
+            }
+        }
+        Commands::Forms {
+            document,
+            page,
+            filled_only,
+            format,
+        } => {
+            info!(target: "cli", document = %document, "Extracting interactive form fields");
+            let doc = if let Some(d) = store.get(&document) {
+                Some(d)
+            } else {
+                let path = std::path::Path::new(&document);
+                if path.exists() && path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+                    Some(docugraph::document::load_pdf_from_path(path)?)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(doc) = doc {
+                let mut matched_fields: Vec<&docugraph::document::FormField> = if let Some(p) = page
+                {
+                    doc.forms_for_page(p)
+                } else {
+                    doc.forms.iter().collect()
+                };
+
+                if filled_only {
+                    matched_fields
+                        .retain(|f| f.value.as_ref().is_some_and(|v| !v.trim().is_empty()));
+                }
+
+                if format.eq_ignore_ascii_case("json") {
+                    let results: Vec<docugraph::mcp::FormFieldResult> = matched_fields
+                        .iter()
+                        .map(|f| docugraph::mcp::FormFieldResult {
+                            name: f.name.clone(),
+                            fully_qualified_name: f.fully_qualified_name.clone(),
+                            field_type: f.field_type.as_str().to_string(),
+                            value: f.value.clone(),
+                            default_value: f.default_value.clone(),
+                            read_only: f.read_only,
+                            required: f.required,
+                            page_number: f.page_number,
+                            rect: f.rect,
+                        })
+                        .collect();
+
+                    let res = docugraph::mcp::DocumentGetFormsResult {
+                        document_id: doc.id.0.clone(),
+                        total_fields: results.len(),
+                        fields: results,
+                    };
+                    println!("{}", serde_json::to_string_pretty(&res)?);
+                } else {
+                    eprintln!("\n📋 Interactive Form Fields for '{}':", doc.metadata.title);
+                    eprintln!("  Total Fields: {}", matched_fields.len());
+                    if matched_fields.is_empty() {
+                        eprintln!("  No form fields found matching filter criteria.");
+                    } else {
+                        eprintln!();
+                        for (idx, field) in matched_fields.iter().enumerate() {
+                            let val_desc = field
+                                .value
+                                .as_deref()
+                                .map(|v| format!("= \"{}\"", v))
+                                .unwrap_or_else(|| "(empty)".to_string());
+                            let page_desc = field
+                                .page_number
+                                .map(|p| format!("p.{}", p))
+                                .unwrap_or_else(|| "p.?".to_string());
+                            let flags_desc = match (field.read_only, field.required) {
+                                (true, true) => " [RO, REQ]",
+                                (true, false) => " [RO]",
+                                (false, true) => " [REQ]",
+                                (false, false) => "",
+                            };
+                            let rect_desc = match field.rect {
+                                Some([x0, y0, x1, y1]) => {
+                                    format!(" [rect: {:.1}, {:.1}, {:.1}, {:.1}]", x0, y0, x1, y1)
+                                }
+                                None => String::new(),
+                            };
+                            eprintln!(
+                                "  [{}] {:<5} | {:<10} | {:<25} | {}{}{}",
+                                idx + 1,
+                                page_desc,
+                                field.field_type.as_str(),
+                                field.fully_qualified_name,
+                                val_desc,
+                                flags_desc,
                                 rect_desc
                             );
                         }

@@ -365,11 +365,62 @@ Hito 7: Outlines Nativos y Grafo de Enlaces [COMPLETADO]
 
 ---
 
+### 📋 Hito 8: Formularios Interactivos (`/AcroForm`) & Tagged PDF Semántico (`/StructTreeRoot`)
+
+> **Estado:** ✅ **Completado y Certificado**
+> **Debilidad resuelta:**
+> - *Debilidad 7:* Soporte para formularios interactivos (`/AcroForm`) y detección de Tagged PDF / PDF/UA (`/StructTreeRoot`), permitiendo a los agentes LLM acceder a campos rellenables (entradas de texto, checkboxes, radio buttons, dropdowns) con sus valores actuales y predeterminados, y verificar la conformidad estructural semántica del documento.
+
+#### Árbol de Tareas (WBS)
+```text
+Hito 8: Formularios Interactivos y Tagged PDF [COMPLETADO]
+├── 8.1 Modelo de Datos de Formularios y Tagged PDF
+│   ├── [x] 8.1.1 `FormFieldType` enum (`Text`, `Checkbox`, `Radio`, `Button`, `Choice`, `Signature`, `Unknown`)
+│   ├── [x] 8.1.2 `FormField` struct (`name`, `fully_qualified_name`, `field_type`, `value`, `default_value`, `read_only`, `required`, `page_number`, `rect`)
+│   ├── [x] 8.1.3 Extensión de `DocumentMetadata` con `has_forms`, `total_form_fields` e `is_tagged`
+│   └── [x] 8.1.4 Extensión de `Document` con `forms: Vec<FormField>` y métodos `forms()` y `forms_for_page(page)`
+├── 8.2 Motor de Extracción de AcroForms y Estructura Jerárquica
+│   ├── [x] 8.2.1 Travesía recursiva de campos (`/AcroForm /Fields` y `/Kids`)
+│   ├── [x] 8.2.2 Propagación de nombres jerárquicos calificados (`parent.child`)
+│   ├── [x] 8.2.3 Herencia de atributos `/FT` (tipo de campo) y `/Ff` (flags)
+│   ├── [x] 8.2.4 Decodificación de valores `/V` y `/DV` (texto, nombres PDF, streams)
+│   ├── [x] 8.2.5 Clasificación precisa de checkboxes vs radio buttons vs pushbuttons
+│   └── [x] 8.2.6 Resolución de página asociada mediante `/P` directo o mapa inverso de `/Annots`
+├── 8.3 Detección de Estructura Lógica Tagged PDF
+│   ├── [x] 8.3.1 Detección de `/StructTreeRoot` en catálogo del documento
+│   ├── [x] 8.3.2 Detección de `/MarkInfo` con `/Marked true`
+│   └── [x] 8.3.3 Conteo de elementos raíz y detección de `/RoleMap`
+├── 8.4 Protocolo MCP y CLI
+│   ├── [x] 8.4.1 Nueva herramienta MCP `document_get_forms` con filtros de página y `filled_only`
+│   ├── [x] 8.4.2 Actualización de `document_info` para reportar `has_forms`, `total_form_fields` e `is_tagged`
+│   ├── [x] 8.4.3 Nuevo comando CLI `docugraph forms <DOCUMENT> [--page <N>] [--filled-only] [--format <text|json>]`
+│   └── [x] 8.4.4 Diagnóstico CLI ampliado en `docugraph info` e indexación
+└── 8.5 Verificación y Pruebas Automatizadas
+    ├── [x] 8.5.1 Suite de 7 pruebas dedicadas en `tests/forms_and_tagged_pdf_test.rs`
+    └── [x] 8.5.2 68 pruebas pasando en total (`cargo test --all`), 0 advertencias en `clippy`
+```
+
+* **Patrones GoF Aplicados:**
+  - **Composite:** Los campos de formularios pueden ser contenedores intermedios con `/Kids` o nodos hoja de interacción widget; se recorren uniformemente resolviendo herencia jerárquica.
+  - **Interpreter / Value Decoder:** Decodificación de los valores heterogéneos `/V` y `/DV` según el tipo de objeto lopdf (strings literales, hexadecimales, nombres de estado o booleanos).
+* **Filosofía SpaceX:**
+  - *Paso 1 (Cuestionar):* No se necesita un motor masivo de PDF Form XFA; el 99% de los PDFs técnicos y formularios oficiales usan `/AcroForm` estándar y `/StructTreeRoot`.
+  - *Paso 2 (Eliminar):* Eliminada la complejidad de duplicar nodos no interactivos; solo se extraen las hojas interactivas con sus nombres calificados y coordenadas.
+  - *Paso 3 (Simplificar/Optimizar):* Resolución en tiempo O(1) de páginas faltantes mediante `annot_page_map`.
+  - *Paso 4 (Acelerar):* Ejecución de la suite completa de 7 tests de formularios en 0.01s.
+  - *Paso 5 (Automatizar):* Extracción automática integrada en el ciclo de vida del parseo de documentos y caché transparente.
+* **Resultados de Validación:**
+  - 7 tests dedicados pasando en `tests/forms_and_tagged_pdf_test.rs`.
+  - 68 tests totales pasando en la suite.
+  - 100% compliant con `cargo fmt` y `cargo clippy --all-targets -- -D warnings`.
+
+---
+
 ## 📈 3. Matriz de Patrones GoF y su Rol Arquitectónico
 
 | Patrón GoF | Componente en DocuGraph | Problema que resuelve |
 |---|---|---|
-| **Composite** | `DocumentElement` / `SectionNode` | Representar el árbol jerárquico del documento (secciones, subsecciones, tablas, párrafos) y red de hipervínculos de forma uniforme. |
+| **Composite** | `DocumentElement` / `SectionNode` / `AcroForm Node` | Representar el árbol jerárquico del documento (secciones, subsecciones, tablas, párrafos), red de hipervínculos y jerarquía de campos AcroForm de forma uniforme. |
 | **Strategy** | `ReadingOrderStrategy`, `BudgetStrategy`, `OutlineExtractor` & `HybridRetriever` | Alternar lectura mono/multi-columna; estrategias de presupuesto; alternar extracción de outlines nativos vs tipográficos. |
 | **Chain of Responsibility** | `StreamSecurityPipeline` | Filtrado secuencial de seguridad: desencriptación $\rightarrow$ verificación tipográfica $\rightarrow$ detección de texto invisible. |
 | **Builder** | `MarkdownTableBuilder` & `ContextBuilder` | Construir tablas GFM y fragmentos compactos con presupuestos estrictos paso a paso. |

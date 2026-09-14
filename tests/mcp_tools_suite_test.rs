@@ -20,6 +20,7 @@ fn create_test_server() -> DocuGraphServer {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
 
     doc.add_page(Page::new(

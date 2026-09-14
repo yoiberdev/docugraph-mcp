@@ -135,6 +135,12 @@ pub struct DocumentInfoResult {
     pub scan_warning: Option<String>,
     #[serde(default)]
     pub total_links: u32,
+    #[serde(default)]
+    pub has_forms: bool,
+    #[serde(default)]
+    pub total_form_fields: u32,
+    #[serde(default)]
+    pub is_tagged: bool,
 }
 
 /// Outline node returned by `document_outline`.
@@ -214,4 +220,46 @@ pub struct DocumentGetLinksResult {
     pub document_id: String,
     pub total_links: usize,
     pub links: Vec<DocumentLinkResult>,
+}
+
+/// Parameters for `document_get_forms`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentGetFormsParams {
+    /// Document identifier or content hash
+    pub document_id: String,
+    /// Optional 1-based page number to filter form fields on a specific page
+    pub page: Option<u32>,
+    /// Optional filter: only return fields that have an assigned non-empty value (default: false)
+    pub filled_only: Option<bool>,
+}
+
+/// An interactive form field result item.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FormFieldResult {
+    /// Short field name
+    pub name: String,
+    /// Fully qualified hierarchical field name (e.g. "applicant.address.city")
+    pub fully_qualified_name: String,
+    /// Field type: "text", "checkbox", "radio", "choice", "signature", or "unknown"
+    pub field_type: String,
+    /// Current assigned value if set
+    pub value: Option<String>,
+    /// Default value if specified
+    pub default_value: Option<String>,
+    /// Whether the field is read-only
+    pub read_only: bool,
+    /// Whether the field is required
+    pub required: bool,
+    /// 1-based page number where the field widget resides
+    pub page_number: Option<u32>,
+    /// Bounding box rectangle `[x0, y0, x1, y1]` on the page if present
+    pub rect: Option<[f32; 4]>,
+}
+
+/// Complete result returned by `document_get_forms`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentGetFormsResult {
+    pub document_id: String,
+    pub total_fields: usize,
+    pub fields: Vec<FormFieldResult>,
 }

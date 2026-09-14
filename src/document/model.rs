@@ -117,6 +117,63 @@ impl DocumentLink {
     }
 }
 
+/// Type of an interactive form field extracted from an /AcroForm dictionary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", content = "details")]
+pub enum FormFieldType {
+    /// Text input field (/Tx)
+    Text,
+    /// Checkbox toggle field (/Btn)
+    Checkbox,
+    /// Radio button group choice (/Btn with radio flag)
+    Radio,
+    /// Push button (/Btn with pushbutton flag)
+    Button,
+    /// Choice dropdown or list box (/Ch)
+    Choice,
+    /// Digital signature field (/Sig)
+    Signature,
+    /// Unknown or custom field type
+    Unknown(String),
+}
+
+impl FormFieldType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            FormFieldType::Text => "text",
+            FormFieldType::Checkbox => "checkbox",
+            FormFieldType::Radio => "radio",
+            FormFieldType::Button => "button",
+            FormFieldType::Choice => "choice",
+            FormFieldType::Signature => "signature",
+            FormFieldType::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+/// An interactive form field extracted from a PDF's /AcroForm hierarchy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FormField {
+    /// Simple field name (/T)
+    pub name: String,
+    /// Fully qualified hierarchical field name (e.g. "applicant.address.city")
+    pub fully_qualified_name: String,
+    /// Classified field type
+    pub field_type: FormFieldType,
+    /// Current assigned value (/V)
+    pub value: Option<String>,
+    /// Default value (/DV)
+    pub default_value: Option<String>,
+    /// Whether the field is read-only (bit 1 of /Ff)
+    pub read_only: bool,
+    /// Whether the field is required (bit 2 of /Ff)
+    pub required: bool,
+    /// 1-based page number where the visual field widget is located
+    pub page_number: Option<u32>,
+    /// Bounding box rectangle [x0, y0, x1, y1] on the page if present
+    pub rect: Option<[f32; 4]>,
+}
+
 /// Metadata extracted from a document.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DocumentMetadata {
@@ -135,6 +192,12 @@ pub struct DocumentMetadata {
     pub source_path: Option<String>,
     #[serde(default)]
     pub total_links: u32,
+    #[serde(default)]
+    pub has_forms: bool,
+    #[serde(default)]
+    pub total_form_fields: u32,
+    #[serde(default)]
+    pub is_tagged: bool,
 }
 
 /// A single extracted page from a document.
@@ -244,6 +307,8 @@ pub struct Document {
     pub metadata: DocumentMetadata,
     pub pages: Vec<Page>,
     pub sections: Vec<SectionNode>,
+    #[serde(default)]
+    pub forms: Vec<FormField>,
 }
 
 impl Document {
@@ -255,6 +320,7 @@ impl Document {
             metadata,
             pages: Vec::new(),
             sections: Vec::new(),
+            forms: Vec::new(),
         }
     }
 
@@ -283,6 +349,19 @@ impl Document {
         self.get_page(page_number)
             .map(|p| p.links.iter().collect())
             .unwrap_or_default()
+    }
+
+    /// Return a slice of all interactive form fields found in this document.
+    pub fn forms(&self) -> &[FormField] {
+        &self.forms
+    }
+
+    /// Return all interactive form fields mapped to a specific page number.
+    pub fn forms_for_page(&self, page_number: u32) -> Vec<&FormField> {
+        self.forms
+            .iter()
+            .filter(|f| f.page_number == Some(page_number))
+            .collect()
     }
 
     /// Find a section by its unique section ID.

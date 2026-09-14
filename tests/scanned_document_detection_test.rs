@@ -215,6 +215,7 @@ async fn test_mcp_server_scanned_warnings_in_tools() {
         scanned_pages_count: 1,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
 
     let mut page_1 = Page::new(

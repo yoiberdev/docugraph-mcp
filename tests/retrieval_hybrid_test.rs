@@ -20,6 +20,7 @@ fn create_sample_design_pattern_doc() -> Document {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
 
     // Page 1: Overview
@@ -111,6 +112,7 @@ fn test_bm25_utf8_spanish_characters() {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 0,
+        ..Default::default()
     });
 
     doc.add_page(Page::new(

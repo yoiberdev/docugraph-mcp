@@ -326,6 +326,7 @@ async fn test_mcp_tool_document_get_links() {
         scanned_pages_count: 0,
         source_path: None,
         total_links: 3,
+        ..Default::default()
     });
 
     let mut p1 = Page::new(1, "Page 1 with external link and cross-reference.");
