@@ -9,7 +9,7 @@
       "interchangeable",
       "alternative to subclassing"
     ],
-    "target_tool": "pattern_get",
+    "target_tool": "document_get_context",
     "evaluation_criteria": {
       "requires_provenance": true,
       "max_context_tokens": 500
@@ -24,7 +24,7 @@
       "internal state",
       "interchangeable algorithms"
     ],
-    "target_tool": "pattern_compare",
+    "target_tool": "document_get_evidence",
     "evaluation_criteria": {
       "requires_provenance": true,
       "max_context_tokens": 800
