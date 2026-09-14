@@ -71,6 +71,8 @@ pub fn load_pdf_from_path(path: impl AsRef<Path>) -> Result<Document> {
     if sections.is_empty() {
         debug!(target: "parser", "No native PDF outlines detected; applying typographic heuristics");
         sections = infer_sections_from_pages(&pages);
+    } else {
+        reconcile_section_pages_and_previews(&mut sections, &pages, total_pages);
     }
 
     // Determine document title from file stem or metadata
@@ -401,4 +403,86 @@ fn chrono_timestamp_iso8601() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}-01-01T00:00:00Z", 1970 + duration.as_secs() / 31_536_000)
+}
+
+/// Reconcile section page ranges and populate content previews from extracted pages.
+fn reconcile_section_pages_and_previews(
+    sections: &mut [SectionNode],
+    pages: &[Page],
+    total_pages: u32,
+) {
+    if sections.is_empty() || pages.is_empty() {
+        return;
+    }
+
+    let mut last_known_page = 1;
+    for node in sections.iter_mut() {
+        resolve_node_page_and_preview(node, pages, &mut last_known_page);
+    }
+
+    fix_page_ends(sections, total_pages);
+}
+
+fn resolve_node_page_and_preview(
+    node: &mut SectionNode,
+    pages: &[Page],
+    last_known_page: &mut u32,
+) {
+    let title_clean = node.title.trim();
+    if node.page_start <= 1 && title_clean.len() > 3 {
+        let title_lower = title_clean.to_lowercase();
+        let search_start_idx = (*last_known_page).saturating_sub(1) as usize;
+        for page in pages.iter().skip(search_start_idx) {
+            let page_lower = page.text.to_lowercase();
+            if page_lower.contains(&title_lower) {
+                node.page_start = page.page_number;
+                node.page_end = page.page_number;
+                *last_known_page = page.page_number;
+                break;
+            }
+        }
+    } else if node.page_start > *last_known_page {
+        *last_known_page = node.page_start;
+    }
+
+    if node.content_preview.is_empty() && node.page_start >= 1 {
+        let p_idx = (node.page_start - 1) as usize;
+        if let Some(page) = pages.get(p_idx) {
+            let preview: String = page
+                .text
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(160)
+                .collect();
+            node.content_preview = preview.trim().replace('\n', " ");
+        }
+    }
+
+    for child in &mut node.children {
+        resolve_node_page_and_preview(child, pages, last_known_page);
+    }
+}
+
+fn fix_page_ends(sections: &mut [SectionNode], parent_end: u32) {
+    let len = sections.len();
+    for i in 0..len {
+        let next_start = if i + 1 < len {
+            Some(sections[i + 1].page_start)
+        } else {
+            None
+        };
+
+        let node = &mut sections[i];
+        if !node.children.is_empty() {
+            let child_max_end = next_start.unwrap_or(parent_end);
+            fix_page_ends(&mut node.children, child_max_end);
+            if let Some(last_child) = node.children.last() {
+                node.page_end = last_child.page_end.max(node.page_start);
+            }
+        } else if let Some(next_p) = next_start {
+            node.page_end = next_p.saturating_sub(1).max(node.page_start);
+        } else {
+            node.page_end = parent_end.max(node.page_start);
+        }
+    }
 }

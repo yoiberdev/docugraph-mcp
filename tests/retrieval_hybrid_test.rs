@@ -95,6 +95,33 @@ fn test_bm25_search() {
 }
 
 #[test]
+fn test_bm25_utf8_spanish_characters() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "spanish-test".to_string(),
+        title: "Aprendiendo Git y Arquitectura de Software".to_string(),
+        author: Some("Autor Hispano".to_string()),
+        total_pages: 1,
+        total_sections: 1,
+        file_size_bytes: 1024,
+        content_hash: "1234utf8".to_string(),
+        indexed_at: "2026-09-13T00:00:00Z".to_string(),
+    });
+
+    doc.add_page(Page {
+        page_number: 1,
+        text: "¿Cómo funciona la sincronización en Git? El árbol de confirmaciones añade ramas para el diseño ágil y estructurado con un ñandú.".to_string(),
+        char_count: 120,
+    });
+    doc.sections
+        .push(SectionNode::new("sec-1", "Sincronización", 1, 1, 1, None));
+
+    let bm25 = Bm25Index::build_from_documents(&[doc], None);
+    let hits = bm25.search("sincronización ramas diseño", 1);
+    assert!(!hits.is_empty(), "BM25 should match Spanish terms");
+    assert!(!hits[0].snippet.is_empty());
+}
+
+#[test]
 fn test_embedding_and_cosine_similarity() {
     let provider = DeterministicSubwordEmbedding::default();
     let vec1 = provider.embed("Strategy algorithm design pattern").unwrap();

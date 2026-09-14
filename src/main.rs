@@ -67,23 +67,65 @@ async fn main() -> anyhow::Result<()> {
             service.waiting().await?;
         }
         Commands::Index { path } => {
-            info!(target: "cli", path = %path, "Indexing PDF document");
-            let doc = docugraph::document::load_pdf_from_path(&path)?;
-            store.insert(doc.clone())?;
+            let p = std::path::Path::new(&path);
+            if p.is_dir() {
+                info!(target: "cli", dir = %path, "Indexing all PDF documents in directory");
+                let mut pdf_paths = Vec::new();
+                collect_pdfs_recursive(p, &mut pdf_paths);
 
-            eprintln!("\n📄 Document Ingested Successfully!");
-            eprintln!("  ID:          {}", doc.id);
-            eprintln!("  Title:       {}", doc.metadata.title);
-            if let Some(author) = &doc.metadata.author {
-                eprintln!("  Author:      {}", author);
+                if pdf_paths.is_empty() {
+                    eprintln!("No PDF files found in directory: {}", path);
+                    return Ok(());
+                }
+
+                eprintln!(
+                    "\n📚 Found {} PDF document(s) in '{}'. Indexing...",
+                    pdf_paths.len(),
+                    path
+                );
+                let mut indexed_count = 0;
+                let total_found = pdf_paths.len();
+                for pdf_path in pdf_paths {
+                    eprint!("  - Indexing {}... ", pdf_path.display());
+                    match docugraph::document::load_pdf_from_path(&pdf_path) {
+                        Ok(doc) => {
+                            let total_p = doc.metadata.total_pages;
+                            let total_s = doc.total_sections();
+                            if let Err(e) = store.insert(doc) {
+                                eprintln!("failed to cache: {e}");
+                            } else {
+                                eprintln!("OK ({} pages, {} sections)", total_p, total_s);
+                                indexed_count += 1;
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("failed: {err}");
+                        }
+                    }
+                }
+                eprintln!(
+                    "\n✅ Successfully indexed and cached {}/{} document(s)!",
+                    indexed_count, total_found
+                );
+            } else {
+                info!(target: "cli", path = %path, "Indexing PDF document");
+                let doc = docugraph::document::load_pdf_from_path(&path)?;
+                store.insert(doc.clone())?;
+
+                eprintln!("\n📄 Document Ingested Successfully!");
+                eprintln!("  ID:          {}", doc.id);
+                eprintln!("  Title:       {}", doc.metadata.title);
+                if let Some(author) = &doc.metadata.author {
+                    eprintln!("  Author:      {}", author);
+                }
+                eprintln!("  Pages:       {}", doc.metadata.total_pages);
+                eprintln!("  Size:        {} bytes", doc.metadata.file_size_bytes);
+                eprintln!("  SHA-256:     {}", doc.metadata.content_hash);
+                eprintln!("  Sections:    {}", doc.total_sections());
+                eprintln!("\n🌳 Document Outline:");
+                print_outline_tree(&doc.sections, 0);
+                eprintln!();
             }
-            eprintln!("  Pages:       {}", doc.metadata.total_pages);
-            eprintln!("  Size:        {} bytes", doc.metadata.file_size_bytes);
-            eprintln!("  SHA-256:     {}", doc.metadata.content_hash);
-            eprintln!("  Sections:    {}", doc.total_sections());
-            eprintln!("\n🌳 Document Outline:");
-            print_outline_tree(&doc.sections, 0);
-            eprintln!();
         }
         Commands::List => {
             info!(target: "cli", "Listing indexed documents");
@@ -176,6 +218,24 @@ fn print_outline_tree(sections: &[docugraph::document::SectionNode], depth: usiz
         );
         if depth < 3 {
             print_outline_tree(&s.children, depth + 1);
+        }
+    }
+}
+
+fn collect_pdfs_recursive(dir: &std::path::Path, acc: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_pdfs_recursive(&path, acc);
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("pdf"))
+                .unwrap_or(false)
+            {
+                acc.push(path);
+            }
         }
     }
 }

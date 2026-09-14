@@ -222,7 +222,7 @@ fn count_terms(tokens: &[String]) -> HashMap<String, u32> {
     map
 }
 
-/// Extract a contextual snippet around matching terms.
+/// Extract a contextual snippet around matching terms, safely respecting UTF-8 boundaries.
 fn extract_snippet(text: &str, query_terms: &[String], max_chars: usize) -> String {
     let lower = text.to_lowercase();
     let mut best_pos = 0;
@@ -234,8 +234,18 @@ fn extract_snippet(text: &str, query_terms: &[String], max_chars: usize) -> Stri
         }
     }
 
-    let start = best_pos.saturating_sub(60);
-    let end = (start + max_chars).min(text.len());
+    let raw_start = best_pos.saturating_sub(60);
+    let raw_end = (raw_start + max_chars).min(text.len());
+
+    // Snap to valid UTF-8 character boundaries
+    let mut start = raw_start;
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = raw_end;
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
 
     let mut snippet = text[start..end].trim().replace('\n', " ");
     if start > 0 {
