@@ -4,6 +4,7 @@ pub mod layout;
 pub mod links;
 pub mod model;
 pub mod outline_strategy;
+pub mod page_labels;
 pub mod parser;
 pub mod provenance;
 pub mod structure;
@@ -26,6 +27,10 @@ pub use model::{
 };
 pub use outline_strategy::{
     FallbackOutlineStrategy, NativeOutlineExtractor, OutlineExtractor, TypographicOutlineExtractor,
+};
+pub use page_labels::{
+    PageLabelRange, PageLabelStyle, extract_page_label_ranges, extract_page_labels,
+    format_page_number, printed_label_suffix,
 };
 pub use parser::{
     PageSecurityScan, inspect_page_images, load_pdf_from_path, load_pdf_from_path_with_password,

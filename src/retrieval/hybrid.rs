@@ -37,6 +37,9 @@ pub struct HybridSearchHit {
     pub snippet: String,
     /// Page the snippet was taken from; for a section, the page inside its range that matched
     pub snippet_page: u32,
+    /// Printed label of `snippet_page`, when the PDF defines page labels
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet_page_label: Option<String>,
     pub final_score: f32,
     pub bm25_score: f32,
     pub semantic_score: f32,
@@ -149,12 +152,20 @@ impl HybridRetriever {
 
             // Include if there is any meaningful relevance
             if final_score > 0.05 {
-                let (snippet, snippet_page) = if let Some((_, hit)) = bm25_map.get(unit.id.as_str())
-                {
-                    (hit.snippet.clone(), hit.snippet_page)
-                } else {
-                    (unit.text.chars().take(200).collect(), unit.page_at(0))
-                };
+                let (snippet, snippet_page, snippet_page_label) =
+                    if let Some((_, hit)) = bm25_map.get(unit.id.as_str()) {
+                        (
+                            hit.snippet.clone(),
+                            hit.snippet_page,
+                            hit.snippet_page_label.clone(),
+                        )
+                    } else {
+                        (
+                            unit.text.chars().take(200).collect(),
+                            unit.page_at(0),
+                            unit.label_at(0).map(str::to_string),
+                        )
+                    };
 
                 scored_hits.push(HybridSearchHit {
                     unit_id: unit.id.clone(),
@@ -165,6 +176,7 @@ impl HybridRetriever {
                     section_id: unit.section_id.clone(),
                     snippet,
                     snippet_page,
+                    snippet_page_label,
                     final_score,
                     bm25_score: bm25_raw,
                     semantic_score,

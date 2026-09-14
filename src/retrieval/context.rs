@@ -2,6 +2,7 @@
 
 use super::hybrid::HybridSearchHit;
 use crate::document::model::Document;
+use crate::document::page_labels::printed_label_suffix;
 use serde::{Deserialize, Serialize};
 
 /// Approximate characters per token for technical prose and code (tiktoken/Llama heuristics).
@@ -38,6 +39,9 @@ impl Default for ContextBudget {
 pub struct EvidenceItem {
     pub document_id: String,
     pub page: u32,
+    /// Printed label of `page`, when the PDF defines page labels
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_label: Option<String>,
     pub section_title: String,
     pub section_id: Option<String>,
     pub citation: String,
@@ -111,18 +115,22 @@ impl ContextBuilder {
                 break;
             }
 
-            // Cite the page the snippet comes from, not the first page of a matched section
+            // Cite the page the snippet comes from, not the first page of a matched section,
+            // with its printed label when the PDF defines one
+            let page_ref = format!(
+                "p. {}{}",
+                hit.snippet_page,
+                printed_label_suffix(hit.snippet_page, hit.snippet_page_label.as_deref())
+            );
             let citation = match &hit.section_id {
-                Some(sec) => format!(
-                    "[Doc: {} p. {} § {}]",
-                    hit.document_id, hit.snippet_page, sec
-                ),
-                None => format!("[Doc: {} p. {}]", hit.document_id, hit.snippet_page),
+                Some(sec) => format!("[Doc: {} {} § {}]", hit.document_id, page_ref, sec),
+                None => format!("[Doc: {} {}]", hit.document_id, page_ref),
             };
 
             items.push(EvidenceItem {
                 document_id: hit.document_id.clone(),
                 page: hit.snippet_page,
+                page_label: hit.snippet_page_label.clone(),
                 section_title: hit.title.clone(),
                 section_id: hit.section_id.clone(),
                 citation,
@@ -266,8 +274,11 @@ impl ContextBuilder {
                     hit.snippet.clone()
                 };
                 let snippet_text = format!(
-                    "**[Doc: {} p. {}]** {}\n\n",
-                    hit.document_id, hit.snippet_page, snippet_clean
+                    "**[Doc: {} p. {}{}]** {}\n\n",
+                    hit.document_id,
+                    hit.snippet_page,
+                    printed_label_suffix(hit.snippet_page, hit.snippet_page_label.as_deref()),
+                    snippet_clean
                 );
                 let snippet_tokens = estimate_tokens(&snippet_text);
                 out.push_str(&snippet_text);

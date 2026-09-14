@@ -42,19 +42,31 @@ pub struct PageSpan {
     pub offset: usize,
     /// 1-based page number
     pub page: u32,
+    /// Printed page label (from `/PageLabels`), when the PDF defines one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl SearchUnit {
-    /// Page that contains byte offset `pos` of `text`.
+    /// Page span that contains byte offset `pos` of `text`.
     ///
     /// Offsets before the first page (a section's title line) belong to the first page.
-    pub fn page_at(&self, pos: usize) -> u32 {
+    fn span_at(&self, pos: usize) -> Option<&PageSpan> {
         self.page_spans
             .iter()
             .rev()
             .find(|span| span.offset <= pos)
             .or_else(|| self.page_spans.first())
-            .map_or(self.page_start, |span| span.page)
+    }
+
+    /// Page that contains byte offset `pos` of `text`.
+    pub fn page_at(&self, pos: usize) -> u32 {
+        self.span_at(pos).map_or(self.page_start, |span| span.page)
+    }
+
+    /// Printed label of the page that contains byte offset `pos` of `text`.
+    pub fn label_at(&self, pos: usize) -> Option<&str> {
+        self.span_at(pos).and_then(|span| span.label.as_deref())
     }
 }
 
@@ -80,6 +92,9 @@ pub struct SearchHit {
     pub snippet: String,
     /// Page the snippet was taken from; for a section, the page inside its range that matched
     pub snippet_page: u32,
+    /// Printed label of `snippet_page`, when the PDF defines page labels
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snippet_page_label: Option<String>,
     pub score: f32,
 }
 
@@ -116,6 +131,7 @@ impl Bm25Index {
                         page_spans: vec![PageSpan {
                             offset: 0,
                             page: page.page_number,
+                            label: page.label.clone(),
                         }],
                     });
                 }
@@ -196,6 +212,7 @@ impl Bm25Index {
                     section_id: unit.section_id.clone(),
                     snippet,
                     snippet_page: unit.page_at(match_pos),
+                    snippet_page_label: unit.label_at(match_pos).map(str::to_string),
                     score,
                 }
             })
@@ -211,6 +228,7 @@ fn collect_section_units(doc: &Document, section: &SectionNode, units: &mut Vec<
             page_spans.push(PageSpan {
                 offset: combined_text.len(),
                 page: p,
+                label: page.label.clone(),
             });
             combined_text.push_str(&page.text);
             combined_text.push('\n');

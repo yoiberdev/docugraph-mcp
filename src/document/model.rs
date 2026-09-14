@@ -259,6 +259,10 @@ pub struct Page {
     /// Hyperlinks extracted from this page (external URIs and internal cross-references)
     #[serde(default)]
     pub links: Vec<DocumentLink>,
+    /// Printed page label from the PDF `/PageLabels` tree (e.g. "iii", "17", "A-2"), if the
+    /// document defines a non-empty one. `page_number` stays the physical PDF position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 impl Page {
@@ -274,6 +278,7 @@ impl Page {
             kind: PageKind::DigitalText,
             image_count: 0,
             links: Vec::new(),
+            label: None,
         }
     }
 }
@@ -381,6 +386,17 @@ impl Document {
     /// Retrieve the text of a specific page (1-based index).
     pub fn get_page(&self, page_number: u32) -> Option<&Page> {
         self.pages.iter().find(|p| p.page_number == page_number)
+    }
+
+    /// Printed label of a page (from `/PageLabels`), if the document defines a non-empty one.
+    pub fn page_label(&self, page_number: u32) -> Option<&str> {
+        self.get_page(page_number)
+            .and_then(|page| page.label.as_deref())
+    }
+
+    /// Whether any page carries a printed label from `/PageLabels`.
+    pub fn has_page_labels(&self) -> bool {
+        self.pages.iter().any(|page| page.label.is_some())
     }
 
     /// Return all hyperlinks extracted across all pages in this document.

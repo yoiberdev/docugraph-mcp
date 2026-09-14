@@ -254,6 +254,9 @@ pub fn load_pdf_from_path_with_password(
     let total_pages = page_numbers.len() as u32;
     info!(target: "parser", total_pages = total_pages, "Extracting text and scanning stream security");
 
+    // Printed page labels (/PageLabels); `None` when the PDF does not define them
+    let page_labels = super::page_labels::extract_page_labels(&pdf_doc, total_pages);
+
     let mut pages: Vec<Page> = Vec::with_capacity(page_numbers.len());
     let mut doc_untrusted_detected = false;
     let mut scanned_pages_count = 0u32;
@@ -386,6 +389,11 @@ pub fn load_pdf_from_path_with_password(
             kind,
             image_count,
             links,
+            label: page_labels
+                .as_ref()
+                .and_then(|labels| labels.get(page_num.saturating_sub(1) as usize))
+                .filter(|label| !label.is_empty())
+                .cloned(),
         });
     }
 

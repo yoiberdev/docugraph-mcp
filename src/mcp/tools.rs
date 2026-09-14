@@ -145,6 +145,10 @@ pub struct DocumentInfoResult {
     pub has_attachments: bool,
     #[serde(default)]
     pub total_attachments: u32,
+    /// Whether the PDF defines printed page labels (`/PageLabels`). Page numbers stay physical
+    /// PDF positions; the printed labels are shown next to them ("impresa").
+    #[serde(default)]
+    pub has_page_labels: bool,
 }
 
 /// Outline node returned by `document_outline`.
@@ -155,6 +159,12 @@ pub struct OutlineNodeResult {
     pub level: u32,
     pub page_start: u32,
     pub page_end: u32,
+    /// Printed label of `page_start` (from `/PageLabels`), when the PDF defines one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_label_start: Option<String>,
+    /// Printed label of `page_end` (from `/PageLabels`), when the PDF defines one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_label_end: Option<String>,
     pub children: Vec<OutlineNodeResult>,
 }
 

@@ -10,6 +10,7 @@ use tracing::info;
 
 use super::tools::*;
 use crate::document::model::{Document, PageKind, SectionNode};
+use crate::document::page_labels::printed_label_suffix;
 use crate::multimodal::CachedPageRendererProxy;
 use crate::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, HybridWeights};
 use crate::storage::{DiskCache, DocumentStore};
@@ -163,8 +164,9 @@ impl DocuGraphServer {
                 .map(|s| {
                     let indent = "  ".repeat(s.level.saturating_sub(1) as usize);
                     format!(
-                        "{indent}* {} (pp. {}-{})",
-                        s.title, s.page_start, s.page_end
+                        "{indent}* {} ({})",
+                        s.title,
+                        format_page_range(&doc, s.page_start, s.page_end)
                     )
                 })
                 .collect();
@@ -195,6 +197,7 @@ impl DocuGraphServer {
                 is_tagged: doc.metadata.is_tagged,
                 has_attachments: doc.metadata.has_attachments,
                 total_attachments: doc.metadata.total_attachments,
+                has_page_labels: doc.has_page_labels(),
             };
             serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
         } else {
@@ -218,6 +221,7 @@ impl DocuGraphServer {
                 is_tagged: false,
                 has_attachments: false,
                 total_attachments: 0,
+                has_page_labels: false,
             })
             .unwrap_or_else(|_| "{}".to_string())
         }
@@ -236,7 +240,7 @@ impl DocuGraphServer {
             let tree: Vec<OutlineNodeResult> = doc
                 .sections
                 .iter()
-                .filter_map(|s| map_outline_node(s, 1, max_depth))
+                .filter_map(|s| map_outline_node(&doc, s, 1, max_depth))
                 .collect();
             serde_json::to_string_pretty(&tree).unwrap_or_else(|_| "[]".to_string())
         } else {
@@ -387,17 +391,21 @@ impl DocuGraphServer {
             let mut chars_count = 0;
             for p in params.0.page_start..=params.0.page_end {
                 if let Some(page) = doc.get_page(p) {
+                    let label = printed_label_suffix(p, page.label.as_deref());
                     let page_header = if page.kind == PageKind::ScannedImage {
                         format!(
-                            "--- Página {} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
-                            p
+                            "--- Página {}{} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
+                            p, label
                         )
                     } else if page.untrusted_text_detected {
-                        format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
+                        format!(
+                            "--- Página {}{} [⚠️ Untrusted Hidden Text Detected] ---\n",
+                            p, label
+                        )
                     } else if page.kind == PageKind::Empty {
-                        format!("--- Página {} [Página en Blanco] ---\n", p)
+                        format!("--- Página {}{} [Página en Blanco] ---\n", p, label)
                     } else {
-                        format!("--- Página {} ---\n", p)
+                        format!("--- Página {}{} ---\n", p, label)
                     };
                     if chars_count + page_header.len() + page.text.len() > max_chars {
                         let remaining = max_chars.saturating_sub(chars_count + page_header.len());
@@ -709,6 +717,7 @@ impl DocuGraphServer {
 }
 
 fn map_outline_node(
+    doc: &Document,
     node: &SectionNode,
     current_depth: u32,
     max_depth: u32,
@@ -720,7 +729,7 @@ fn map_outline_node(
     let children = if current_depth < max_depth {
         node.children
             .iter()
-            .filter_map(|c| map_outline_node(c, current_depth + 1, max_depth))
+            .filter_map(|c| map_outline_node(doc, c, current_depth + 1, max_depth))
             .collect()
     } else {
         Vec::new()
@@ -732,6 +741,19 @@ fn map_outline_node(
         level: node.level,
         page_start: node.page_start,
         page_end: node.page_end,
+        page_label_start: doc.page_label(node.page_start).map(str::to_string),
+        page_label_end: doc.page_label(node.page_end).map(str::to_string),
         children,
     })
+}
+
+/// Format a page range as `pp. 96-101`, adding the printed labels (`impresas 89-94`) when the PDF
+/// defines them for both ends.
+fn format_page_range(doc: &Document, start: u32, end: u32) -> String {
+    match (doc.page_label(start), doc.page_label(end)) {
+        (Some(label_start), Some(label_end)) => {
+            format!("pp. {start}-{end}, impresas {label_start}-{label_end}")
+        }
+        _ => format!("pp. {start}-{end}"),
+    }
 }

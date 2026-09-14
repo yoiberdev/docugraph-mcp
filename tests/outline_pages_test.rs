@@ -1,4 +1,5 @@
-//! Page resolution of native outlines whose items point to named destinations.
+//! Page resolution of native outlines whose items point to named destinations, and printed
+//! page labels.
 //!
 //! The PDFs are synthesised in memory and mimic LaTeX/hyperref output: bookmarks use
 //! `/A << /S /GoTo /D (name) >>` and the names live in a multi-level `/Names /Dests` tree.
@@ -6,8 +7,14 @@
 use docugraph::document::{
     NativeOutlineExtractor, OutlineExtractor, SectionNode, load_pdf_from_path, resolve_dest,
 };
+use docugraph::mcp::{
+    DocuGraphServer, DocumentGetEvidenceParams, DocumentInfoParams, DocumentInfoResult,
+    DocumentOutlineParams, DocumentReadPagesParams, OutlineNodeResult,
+};
+use docugraph::storage::DocumentStore;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document as LopdfDoc, Object, ObjectId, Stream, StringFormat, dictionary};
+use rmcp::handler::server::wrapper::Parameters;
 use std::collections::HashMap;
 use tempfile::NamedTempFile;
 
@@ -193,7 +200,10 @@ fn add_outline(doc: &mut LopdfDoc, catalog_id: ObjectId) {
 /// so the title-search fallback cannot hide a wrong destination.
 fn outline_fixture() -> (LopdfDoc, Vec<ObjectId>, ObjectId) {
     let bodies: Vec<String> = (1..=12)
-        .map(|n| format!("Body paragraph printed on sheet number {n}"))
+        .map(|n| match n {
+            9 => "Rollback notes mention the zanzibar release".to_string(),
+            _ => format!("Body paragraph printed on sheet number {n}"),
+        })
         .collect();
     let (mut doc, page_ids, catalog_id) = build_pdf(&bodies);
     add_name_tree(&mut doc, catalog_id, &page_ids);
@@ -297,4 +307,119 @@ fn test_native_outline_siblings_keep_parent_id() {
         vec!["Section one A", "Section one B", "Section one C"]
     );
     assert_eq!(assert_parent_links(&sections, None), OUTLINE.len());
+}
+
+/// /PageLabels as a number tree with /Kids: roman front matter, a page with an empty prefix,
+/// arabic numbers from PDF page 6, and an appendix with a prefix and a start value.
+fn add_page_labels(doc: &mut LopdfDoc, catalog_id: ObjectId) {
+    let front = doc.add_object(dictionary! {
+        "Limits" => vec![Object::Integer(0), Object::Integer(4)],
+        "Nums" => vec![
+            Object::Integer(0),
+            Object::Dictionary(dictionary! { "S" => "r" }),
+            Object::Integer(4),
+            Object::Dictionary(dictionary! { "P" => text("") }),
+        ],
+    });
+    let decimal = doc.add_object(dictionary! { "S" => "D" });
+    let body = doc.add_object(dictionary! {
+        "Limits" => vec![Object::Integer(5), Object::Integer(10)],
+        "Nums" => vec![
+            Object::Integer(5),
+            Object::Reference(decimal),
+            Object::Integer(10),
+            Object::Dictionary(dictionary! {
+                "S" => "A",
+                "P" => text("App-"),
+                "St" => Object::Integer(2),
+            }),
+        ],
+    });
+    let root = doc.add_object(dictionary! {
+        "Kids" => vec![Object::Reference(front), Object::Reference(body)],
+    });
+    catalog_mut(doc, catalog_id).set("PageLabels", root);
+}
+
+#[tokio::test]
+async fn test_printed_page_labels_from_number_tree() {
+    let (mut doc, _, catalog_id) = outline_fixture();
+    add_page_labels(&mut doc, catalog_id);
+    let mut file = NamedTempFile::new().unwrap();
+    doc.save_to(&mut file).unwrap();
+
+    let parsed = load_pdf_from_path(file.path()).unwrap();
+    let labels: Vec<Option<&str>> = parsed.pages.iter().map(|p| p.label.as_deref()).collect();
+    assert_eq!(
+        labels,
+        vec![
+            Some("i"),
+            Some("ii"),
+            Some("iii"),
+            Some("iv"),
+            None,
+            Some("1"),
+            Some("2"),
+            Some("3"),
+            Some("4"),
+            Some("5"),
+            Some("App-B"),
+            Some("App-C"),
+        ]
+    );
+
+    let doc_id = parsed.metadata.id.clone();
+    let server = DocuGraphServer::with_store(DocumentStore::new(None));
+    server.register_document(parsed).await;
+
+    let info: DocumentInfoResult = serde_json::from_str(
+        &server
+            .document_info(Parameters(DocumentInfoParams {
+                document_id: doc_id.clone(),
+            }))
+            .await,
+    )
+    .expect("valid info JSON");
+    assert!(info.has_page_labels);
+    assert!(
+        info.sections_preview
+            .iter()
+            .any(|line| line.ends_with("Section one A (pp. 6-7, impresas 1-2)")),
+        "{:?}",
+        info.sections_preview
+    );
+
+    let outline: Vec<OutlineNodeResult> = serde_json::from_str(
+        &server
+            .document_outline(Parameters(DocumentOutlineParams {
+                document_id: doc_id.clone(),
+                max_depth: None,
+            }))
+            .await,
+    )
+    .expect("valid outline JSON");
+    // PDF page 5 has an empty label, so "Chapter one" gets none
+    assert_eq!(outline[1].page_label_start, None);
+    assert_eq!(outline[2].page_label_start.as_deref(), Some("App-B"));
+    assert_eq!(outline[2].page_label_end.as_deref(), Some("App-C"));
+
+    let pages = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: doc_id.clone(),
+            page_start: 9,
+            page_end: 9,
+            max_chars: None,
+        }))
+        .await;
+    assert!(pages.contains("--- Página 9 (impresa 4) ---"), "{pages}");
+
+    let evidence = server
+        .document_get_evidence(Parameters(DocumentGetEvidenceParams {
+            query: "zanzibar".to_string(),
+            document_id: Some(doc_id),
+            max_tokens: None,
+            max_items: None,
+        }))
+        .await;
+    assert!(evidence.contains("p. 9 (impresa 4)"), "{evidence}");
 }
