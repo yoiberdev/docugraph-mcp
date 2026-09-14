@@ -51,6 +51,9 @@ cargo clippy --all-targets -- -D warnings
 
 # 3. Suite completa de pruebas pasando
 cargo test --all
+
+# 4. (Opcional) Test con un PDF real, ignorado por defecto
+DOCUGRAPH_TEST_PDF=/ruta/a/libro.pdf cargo test --test pdf_ingestion_test -- --ignored
 ```
 
 ---

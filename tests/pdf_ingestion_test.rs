@@ -119,15 +119,21 @@ fn test_provenance_citation_formatting() {
     );
 }
 
+/// Parses a real digital PDF with more than 200 pages end to end.
+///
+/// Ignored by default because the repository ships no PDFs. Run it with:
+/// `DOCUGRAPH_TEST_PDF=/path/to/book.pdf cargo test --test pdf_ingestion_test -- --ignored`
 #[test]
+#[ignore = "needs a real PDF: set DOCUGRAPH_TEST_PDF and run with --ignored"]
 fn test_real_pdf_loading_and_extraction() {
-    let sample_pdf_path = "C:/proyectos/chaika-stage/docs/aprendiendo-git-pdf.pdf";
-    if !std::path::Path::new(sample_pdf_path).exists() {
-        eprintln!("Sample PDF not found; skipping real PDF loading test");
-        return;
-    }
+    let sample_pdf_path = std::env::var("DOCUGRAPH_TEST_PDF")
+        .expect("DOCUGRAPH_TEST_PDF must point to a real PDF with more than 200 pages");
+    assert!(
+        std::path::Path::new(&sample_pdf_path).is_file(),
+        "DOCUGRAPH_TEST_PDF is not a file: {sample_pdf_path}"
+    );
 
-    let doc = load_pdf_from_path(sample_pdf_path).expect("PDF should parse without error");
+    let doc = load_pdf_from_path(&sample_pdf_path).expect("PDF should parse without error");
 
     assert!(doc.metadata.total_pages > 200, "Should have over 200 pages");
     assert!(
