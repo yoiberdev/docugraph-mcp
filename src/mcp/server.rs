@@ -9,7 +9,7 @@ use rmcp::{
 use tracing::info;
 
 use super::tools::*;
-use crate::document::model::{Document, SectionNode};
+use crate::document::model::{Document, PageKind, SectionNode};
 use crate::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, HybridWeights};
 use crate::storage::{DiskCache, DocumentStore};
 
@@ -122,6 +122,7 @@ impl DocuGraphServer {
                 indexed_at: m.indexed_at,
                 is_encrypted: m.is_encrypted,
                 untrusted_text_detected: m.untrusted_text_detected,
+                scanned_pages_count: m.scanned_pages_count,
             })
             .collect();
         serde_json::to_string_pretty(&list).unwrap_or_else(|_| "[]".to_string())
@@ -149,6 +150,15 @@ impl DocuGraphServer {
                 })
                 .collect();
 
+            let scan_warning = if doc.metadata.scanned_pages_count > 0 {
+                Some(format!(
+                    "⚠️ {} de {} páginas parecen ser imágenes escaneadas sin capa de texto digital. Se recomienda OCR externo.",
+                    doc.metadata.scanned_pages_count, doc.metadata.total_pages
+                ))
+            } else {
+                None
+            };
+
             let info = DocumentInfoResult {
                 id: doc.id.to_string(),
                 title: doc.metadata.title.clone(),
@@ -158,6 +168,8 @@ impl DocuGraphServer {
                 sections_preview: preview,
                 is_encrypted: doc.metadata.is_encrypted,
                 untrusted_text_detected: doc.metadata.untrusted_text_detected,
+                scanned_pages_count: doc.metadata.scanned_pages_count,
+                scan_warning,
             };
             serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
         } else {
@@ -173,6 +185,8 @@ impl DocuGraphServer {
                 ],
                 is_encrypted: false,
                 untrusted_text_detected: false,
+                scanned_pages_count: 0,
+                scan_warning: None,
             })
             .unwrap_or_else(|_| "{}".to_string())
         }
@@ -342,8 +356,15 @@ impl DocuGraphServer {
             let mut chars_count = 0;
             for p in params.0.page_start..=params.0.page_end {
                 if let Some(page) = doc.get_page(p) {
-                    let page_header = if page.untrusted_text_detected {
+                    let page_header = if page.kind == PageKind::ScannedImage {
+                        format!(
+                            "--- Página {} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
+                            p
+                        )
+                    } else if page.untrusted_text_detected {
                         format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
+                    } else if page.kind == PageKind::Empty {
+                        format!("--- Página {} [Página en Blanco] ---\n", p)
                     } else {
                         format!("--- Página {} ---\n", p)
                     };

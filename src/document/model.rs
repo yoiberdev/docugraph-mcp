@@ -36,6 +36,18 @@ impl From<String> for DocumentId {
     }
 }
 
+/// Categorization of a page's content layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageKind {
+    /// Digital text page containing selectable, searchable text
+    DigitalText,
+    /// Scanned image page containing bitmap images with little or no digital text layer
+    ScannedImage,
+    /// Blank / empty page containing neither text nor images
+    Empty,
+}
+
 /// Metadata extracted from a document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentMetadata {
@@ -49,6 +61,7 @@ pub struct DocumentMetadata {
     pub indexed_at: String,
     pub is_encrypted: bool,
     pub untrusted_text_detected: bool,
+    pub scanned_pages_count: u32,
 }
 
 /// A single extracted page from a document.
@@ -62,10 +75,14 @@ pub struct Page {
     pub char_count: usize,
     /// Whether suspicious invisible or microscopic text was detected on this page
     pub untrusted_text_detected: bool,
+    /// Classification of the page (digital text, scanned image, or empty)
+    pub kind: PageKind,
+    /// Number of bitmap images discovered in the page resources
+    pub image_count: usize,
 }
 
 impl Page {
-    /// Helper to construct a clean page without untrusted text flags.
+    /// Helper to construct a clean digital page without untrusted text flags.
     pub fn new(page_number: u32, text: impl Into<String>) -> Self {
         let text = text.into();
         let char_count = text.chars().count();
@@ -74,6 +91,8 @@ impl Page {
             char_count,
             text,
             untrusted_text_detected: false,
+            kind: PageKind::DigitalText,
+            image_count: 0,
         }
     }
 }

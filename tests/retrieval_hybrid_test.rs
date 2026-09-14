@@ -17,6 +17,7 @@ fn create_sample_design_pattern_doc() -> Document {
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
         is_encrypted: false,
         untrusted_text_detected: false,
+        scanned_pages_count: 0,
     });
 
     // Page 1: Overview
@@ -105,6 +106,7 @@ fn test_bm25_utf8_spanish_characters() {
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
         is_encrypted: false,
         untrusted_text_detected: false,
+        scanned_pages_count: 0,
     });
 
     doc.add_page(Page::new(

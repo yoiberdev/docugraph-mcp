@@ -48,6 +48,7 @@ async fn test_document_list_tool() {
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
         is_encrypted: false,
         untrusted_text_detected: false,
+        scanned_pages_count: 0,
     });
     server.register_document(doc).await;
 
@@ -78,6 +79,7 @@ async fn test_document_info_tool() {
         indexed_at: "2026-09-13T00:00:00Z".to_string(),
         is_encrypted: false,
         untrusted_text_detected: false,
+        scanned_pages_count: 0,
     });
     server.register_document(doc).await;
 

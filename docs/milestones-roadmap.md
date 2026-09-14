@@ -22,7 +22,7 @@ graph TD
 
     M0["[Hito 0: Núcleo Actual Estable]<br/>Grafo Jerárquico, Retrieval Híbrido, stdio MCP"]:::foundation
     M1["[Hito 1: Ingestión Resiliente y Anti-Inyección]<br/>Cifrado PDF & Detección de Texto Invisible"]:::foundation
-    M2["[Hito 2: Detección y Advertencia de Escaneos]<br/>Detección de Páginas Imagen-Only"]:::milestone
+    M2["[Hito 2: Detección y Advertencia de Escaneos]<br/>Detección de Páginas Imagen-Only"]:::foundation
     M3["[Hito 3: Reordenamiento Espacial Multi-Columna]<br/>Lectura correcta en Papers (IEEE/ACM)"]:::milestone
     M4["[Hito 4: Reconstrucción de Tablas a Markdown]<br/>Detección de Columnas & Builder GFM"]:::milestone
     M5["[Hito 5: Renderizado Multimodal de Páginas]<br/>Inspección Visual de Diagramas para Vision LLMs"]:::advanced
@@ -140,29 +140,40 @@ Hito 1: Ingestión Resiliente y Seguridad
 
 ### 📷 Hito 2: Detección Activa de Documentos Escaneados (Scan Detector & Actionable Warnings)
 
-> **Debilidad que resuelve:**
-> - *Debilidad 4:* Documentos escaneados (faxes, contratos antiguos) que devuelven `0` caracteres sin explicación para el agente.
+> **Estado:** ✅ **Completado y Certificado**
+> **Debilidad resuelta:**
+> - *Debilidad 4:* Documentos escaneados (faxes, contratos antiguos, fotocopias) que devuelven 0 caracteres sin explicación para el agente LLM, causando que el agente crea que el PDF está corrupto o vacío.
 
 #### Árbol de Tareas (WBS)
 ```text
 Hito 2: Detección de Documentos Escaneados
 ├── 2.1 Análisis de Recursos de Página
 │   ├── 2.1.1 Inspeccionar diccionario /Resources de cada página en búsqueda de /XObject
-│   └── 2.1.2 Contabilizar objetos de subtipo /Image frente al volumen de texto
-├── 2.2 Clasificación Heurística de Páginas
-│   ├── 2.2.1 Regla: Si text_length < 20 chars y image_count >= 1 -> ScannedPage
-│   └── 2.2.2 Marcar campo `is_scanned: true` en Page model
-└── 2.3 Notificación Proactiva para Agentes
-    ├── 2.3.1 Inyectar advertencia estructurada en `document_info` y `document_read_pages`
-    └── 2.3.2 Recomendar al agente el uso de herramientas de visión o OCR externo
+│   ├── 2.1.2 Soporte de herencia de /Resources desde el diccionario /Pages padre
+│   └── 2.1.3 Contabilizar objetos de subtipo /Image y extraer dimensiones (Width x Height)
+├── 2.2 Clasificación Heurística y Tipado de Páginas
+│   ├── 2.2.1 Enum PageKind (DigitalText, ScannedImage, Empty)
+│   ├── 2.2.2 Heurística: Si image_count > 0 y (text_chars < 50 o imagen grande con < 150 chars) -> ScannedImage
+│   ├── 2.2.3 Si text_chars == 0 y image_count == 0 -> Empty
+│   └── 2.2.4 Conteo agregado scanned_pages_count en DocumentMetadata
+├── 2.3 Notificación Proactiva para Agentes LLM
+│   ├── 2.3.1 Inyección de mensaje procesable en Page.text: "[Aviso: La página X es una imagen escaneada... Se requiere OCR]"
+│   ├── 2.3.2 Campo scan_warning y scanned_pages_count expuestos en document_info y document_list
+│   ├── 2.3.3 Encabezado enriquecido en document_read_pages: "--- Página X [📷 Imagen Escaneada / Sin Capa de Texto] ---"
+│   └── 2.3.4 Diagnóstico en consola CLI (docugraph index y docugraph info)
+└── 2.4 Suite de Pruebas Automatizadas
+    └── 2.4.1 5 tests en tests/scanned_document_detection_test.rs (33 tests totales en el proyecto)
 ```
 
 * **Patrones GoF Aplicados:**
-  - **Template Method:** En el ciclo de vida de parseo de página (`extract_page`), se define la plantilla: `extract_streams()` $\rightarrow$ `inspect_resources()` $\rightarrow$ `classify_page_nature()`.
-  - **Null Object:** Si una página es un escaneo sin texto, devolver un `ScannedPagePlaceholder` con advertencia en lugar de cadenas vacías ambiguas.
+  - **Null Object:** Si una página es un escaneo sin texto, no se devuelve una cadena vacía ambigua que confunda al agente; se inyecta un aviso procesable que explica con precisión la causa y recomienda OCR.
+  - **Template Method:** En el ciclo de extracción, se ejecuta la secuencia: `extract_text()` $\rightarrow$ `inspect_page_images()` $\rightarrow$ `classify_page_kind()` $\rightarrow$ `inject_scanned_notice()`.
 * **Filosofía SpaceX:**
-  - *Cuestionar requisito:* No empaquetar Tesseract (300 MB de binarios C++ y modelos de idiomas) dentro del binario de DocuGraph por defecto. En su lugar, detectar con precisión quirúrgica el escaneo y emitir la advertencia al agente, permitiéndole delegar a herramientas multimodales o de visión.
-  - *Acelerar ciclo:* Detección puramente a nivel de catálogo de objetos en memoria en menos de 0.05 ms.
+  - *Paso 1 (Cuestionar requisito):* No empaquetar Tesseract (300 MB de dependencias de C++, libtesseract y modelos de idiomas) dentro del binario de DocuGraph. En su lugar, detectar con precisión quirúrgica el escaneo y emitir la advertencia al agente, permitiéndole delegar a herramientas multimodales o de visión externas.
+  - *Paso 2 (Eliminar):* Eliminar el silencio y la ambigüedad de páginas en blanco.
+  - *Paso 3 (Simplificar/Optimizar):* Detección directa en catálogo de objetos en memoria en menos de 0.05 ms por página.
+  - *Paso 4 (Acelerar):* Pruebas sintéticas con streams `/XObject` `/Image` ejecutadas en 0.05s.
+  - *Paso 5 (Automatizar):* Integrado automáticamente en `load_pdf_from_path_with_password`, `document_read_pages` y CLI.
 
 ---
 

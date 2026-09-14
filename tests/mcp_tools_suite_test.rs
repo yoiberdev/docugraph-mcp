@@ -17,6 +17,7 @@ fn create_test_server() -> DocuGraphServer {
         indexed_at: "2026-09-13T12:00:00Z".to_string(),
         is_encrypted: false,
         untrusted_text_detected: false,
+        scanned_pages_count: 0,
     });
 
     doc.add_page(Page::new(

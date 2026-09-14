@@ -103,12 +103,17 @@ async fn main() -> anyhow::Result<()> {
                             } else {
                                 ""
                             };
+                            let scan_flag = if doc.metadata.scanned_pages_count > 0 {
+                                format!(" [📷 SCANNED: {}p]", doc.metadata.scanned_pages_count)
+                            } else {
+                                String::new()
+                            };
                             if let Err(e) = store.insert(doc) {
                                 eprintln!("failed to cache: {e}");
                             } else {
                                 eprintln!(
-                                    "OK ({} pages, {} sections{})",
-                                    total_p, total_s, sec_flag
+                                    "OK ({} pages, {} sections{}{})",
+                                    total_p, total_s, sec_flag, scan_flag
                                 );
                                 indexed_count += 1;
                             }
@@ -144,6 +149,14 @@ async fn main() -> anyhow::Result<()> {
                     eprintln!("  Security:    ⚠️ Untrusted hidden or microscopic text detected!");
                 } else {
                     eprintln!("  Security:    Clean (No hidden/microscopic text)");
+                }
+                if doc.metadata.scanned_pages_count > 0 {
+                    eprintln!(
+                        "  📷 Escaneado:   ⚠️ {} página(s) sin capa de texto digital (OCR recomendado)",
+                        doc.metadata.scanned_pages_count
+                    );
+                } else {
+                    eprintln!("  📷 Escaneado:   No (Documento digital)");
                 }
                 eprintln!("\n🌳 Document Outline:");
                 print_outline_tree(&doc.sections, 0);
@@ -212,6 +225,17 @@ async fn main() -> anyhow::Result<()> {
                         "⚠️ Untrusted hidden or microscopic text detected!"
                     } else {
                         "Clean"
+                    }
+                );
+                eprintln!(
+                    "  Escaneado: {}",
+                    if doc.metadata.scanned_pages_count > 0 {
+                        format!(
+                            "⚠️ {} página(s) sin capa de texto digital (OCR recomendado)",
+                            doc.metadata.scanned_pages_count
+                        )
+                    } else {
+                        "No (Documento digital)".to_string()
                     }
                 );
                 eprintln!("\n🌳 Outline Preview:");

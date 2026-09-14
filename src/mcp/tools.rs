@@ -117,6 +117,7 @@ pub struct DocumentSummary {
     pub indexed_at: String,
     pub is_encrypted: bool,
     pub untrusted_text_detected: bool,
+    pub scanned_pages_count: u32,
 }
 
 /// Detailed structural outline returned by `document_info`.
@@ -130,6 +131,8 @@ pub struct DocumentInfoResult {
     pub sections_preview: Vec<String>,
     pub is_encrypted: bool,
     pub untrusted_text_detected: bool,
+    pub scanned_pages_count: u32,
+    pub scan_warning: Option<String>,
 }
 
 /// Outline node returned by `document_outline`.

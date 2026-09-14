@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::{debug, info, warn};
 
-use super::model::{Document, DocumentId, DocumentMetadata, Page, SectionNode};
+use super::model::{Document, DocumentId, DocumentMetadata, Page, PageKind, SectionNode};
 use super::structure::{infer_sections_from_pages, slugify_title};
 
 /// Security scan findings for a single page content stream.
@@ -122,6 +122,59 @@ pub fn scan_page_security(doc: &lopdf::Document, page_id: (u32, u16)) -> PageSec
     scan
 }
 
+/// Inspect a page for embedded bitmap images (via direct /Resources/XObject or inherited from /Pages parent).
+/// Returns a list of (width, height) tuples for discovered images.
+pub fn inspect_page_images(doc: &lopdf::Document, page_id: (u32, u16)) -> Vec<(i64, i64)> {
+    // 1. Try lopdf's built-in get_page_images
+    if let Ok(imgs) = doc.get_page_images(page_id)
+        && !imgs.is_empty()
+    {
+        return imgs
+            .into_iter()
+            .map(|img| (img.width, img.height))
+            .collect();
+    }
+
+    // 2. Fallback: check inherited /Resources in parent /Pages if direct dictionary had no XObjects
+    let mut images = Vec::new();
+    let inherited_xobjects = doc
+        .get_dictionary(page_id)
+        .ok()
+        .and_then(|p| p.get(b"Parent").ok())
+        .and_then(|p| p.as_reference().ok())
+        .and_then(|parent_ref| doc.get_dictionary(parent_ref).ok())
+        .and_then(|parent_dict| doc.get_dict_in_dict(parent_dict, b"Resources").ok())
+        .and_then(|res_dict| doc.get_dict_in_dict(res_dict, b"XObject").ok());
+
+    if let Some(xobject_dict) = inherited_xobjects {
+        for (_, xval) in xobject_dict.iter() {
+            if let Ok(ref_id) = xval.as_reference()
+                && let Ok(obj) = doc.get_object(ref_id)
+                && let Ok(stream) = obj.as_stream()
+                && stream
+                    .dict
+                    .get(b"Subtype")
+                    .and_then(|s| s.as_name())
+                    .is_ok_and(|n| n == b"Image")
+            {
+                let w = stream
+                    .dict
+                    .get(b"Width")
+                    .and_then(|o| o.as_i64())
+                    .unwrap_or(0);
+                let h = stream
+                    .dict
+                    .get(b"Height")
+                    .and_then(|o| o.as_i64())
+                    .unwrap_or(0);
+                images.push((w, h));
+            }
+        }
+    }
+
+    images
+}
+
 /// Load and parse a PDF document from filesystem path into a structured `Document`.
 pub fn load_pdf_from_path(path: impl AsRef<Path>) -> Result<Document> {
     load_pdf_from_path_with_password(path, None)
@@ -201,6 +254,7 @@ pub fn load_pdf_from_path_with_password(
 
     let mut pages: Vec<Page> = Vec::with_capacity(page_numbers.len());
     let mut doc_untrusted_detected = false;
+    let mut scanned_pages_count = 0u32;
 
     for page_num in page_numbers {
         let page_id = pages_dict.get(&page_num).copied();
@@ -209,6 +263,13 @@ pub fn load_pdf_from_path_with_password(
         } else {
             PageSecurityScan::default()
         };
+
+        let images = if let Some(id) = page_id {
+            inspect_page_images(&pdf_doc, id)
+        } else {
+            Vec::new()
+        };
+        let image_count = images.len();
 
         let mut text = match pdf_doc.extract_text(&[page_num]) {
             Ok(extracted) => extracted,
@@ -250,11 +311,53 @@ pub fn load_pdf_from_path_with_password(
             }
         }
 
+        let non_ws_chars = text
+            .chars()
+            .filter(|c| !c.is_whitespace() && !c.is_control())
+            .count();
+        let has_large_image = images
+            .iter()
+            .any(|&(w, h)| (w >= 150 && h >= 150) || (w * h) >= 40_000);
+
+        let kind =
+            if image_count > 0 && (non_ws_chars < 50 || (non_ws_chars < 150 && has_large_image)) {
+                PageKind::ScannedImage
+            } else if non_ws_chars == 0 && image_count == 0 {
+                PageKind::Empty
+            } else {
+                PageKind::DigitalText
+            };
+
+        if kind == PageKind::ScannedImage {
+            scanned_pages_count += 1;
+            info!(
+                target: "parser",
+                page = page_num,
+                image_count = image_count,
+                text_chars = non_ws_chars,
+                "Page classified as ScannedImage (image present with little or no digital text layer)"
+            );
+
+            if non_ws_chars == 0 {
+                text = format!(
+                    "[Aviso: La página {} es una imagen escaneada sin capa de texto digital ({} imagen(es) detectada(s)). Se requiere OCR externo para extraer su contenido textual.]",
+                    page_num, image_count
+                );
+            } else {
+                text = format!(
+                    "[Aviso: La página {} parece ser un escaneo ({} imagen(es) detectada(s)) con capa de texto mínima o ruidosa ({} caracteres). Se recomienda OCR para texto completo.]\n\n{}",
+                    page_num, image_count, non_ws_chars, text
+                );
+            }
+        }
+
         pages.push(Page {
             page_number: page_num,
             char_count: text.chars().count(),
             text,
             untrusted_text_detected: untrusted_detected,
+            kind,
+            image_count,
         });
     }
 
@@ -291,6 +394,7 @@ pub fn load_pdf_from_path_with_password(
         indexed_at: chrono_timestamp_iso8601(),
         is_encrypted,
         untrusted_text_detected: doc_untrusted_detected,
+        scanned_pages_count,
     };
 
     info!(
@@ -300,7 +404,8 @@ pub fn load_pdf_from_path_with_password(
         pages = pages.len(),
         is_encrypted = is_encrypted,
         untrusted_text_detected = doc_untrusted_detected,
-        "PDF ingestion and security stream scan complete"
+        scanned_pages_count = scanned_pages_count,
+        "PDF ingestion, security scan, and scan detection complete"
     );
 
     Ok(Document {
