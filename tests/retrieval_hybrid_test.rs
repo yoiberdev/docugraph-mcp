@@ -201,3 +201,12 @@ fn test_design_patterns_dynamic_adapter() {
     assert_eq!(p2.name, "State");
     assert!(p2.intent.unwrap().contains("internal state"));
 }
+
+#[test]
+fn test_hybrid_search_with_huge_limit_does_not_overflow() {
+    let doc = create_sample_design_pattern_doc();
+    let retriever = HybridRetriever::build(std::slice::from_ref(&doc), None, None);
+    // limit * 3 used to overflow: a panic in debug builds, a silent wrap in release.
+    let hits = retriever.search("strategy algorithms", usize::MAX);
+    assert!(!hits.is_empty());
+}

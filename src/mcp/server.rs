@@ -263,7 +263,7 @@ impl DocuGraphServer {
         description = "Fast BM25 keyword search across sections and pages. Returns ranked snippets with citations."
     )]
     pub async fn document_search(&self, params: Parameters<DocumentSearchParams>) -> ToolResult {
-        let limit = params.0.limit.unwrap_or(5);
+        let limit = bounded(params.0.limit, 5, MAX_SEARCH_LIMIT);
         let docs = self.get_documents(params.0.document_id.as_deref())?;
         if docs.is_empty() {
             return Ok("No documents available for search.".to_string());
@@ -283,7 +283,7 @@ impl DocuGraphServer {
         &self,
         params: Parameters<DocumentSearchHybridParams>,
     ) -> ToolResult {
-        let limit = params.0.limit.unwrap_or(5);
+        let limit = bounded(params.0.limit, 5, MAX_SEARCH_LIMIT);
         let docs = self.get_documents(params.0.document_id.as_deref())?;
         if docs.is_empty() {
             return Ok("No documents available for search.".to_string());
@@ -313,7 +313,7 @@ impl DocuGraphServer {
         let section_id = &params.0.section_id;
         let include_parent = params.0.include_parent.unwrap_or(true);
         let budget = ContextBudget {
-            max_tokens: params.0.max_tokens.unwrap_or(1500),
+            max_tokens: bounded(params.0.max_tokens, 1500, MAX_CONTEXT_TOKENS),
             max_chunks: 10,
             compact: true,
         };
@@ -344,13 +344,13 @@ impl DocuGraphServer {
         }
 
         let budget = ContextBudget {
-            max_tokens: params.0.max_tokens.unwrap_or(1500),
-            max_chunks: params.0.max_chunks.unwrap_or(5),
+            max_tokens: bounded(params.0.max_tokens, 1500, MAX_CONTEXT_TOKENS),
+            max_chunks: bounded(params.0.max_chunks, 5, MAX_CONTEXT_CHUNKS),
             compact: true,
         };
 
         let retriever = HybridRetriever::build(&docs, None, None);
-        let hits = retriever.search(query, budget.max_chunks * 2);
+        let hits = retriever.search(query, budget.max_chunks.saturating_mul(2));
         Ok(ContextBuilder::build_conceptual_context(
             query, &hits, &docs, budget,
         ))
@@ -372,13 +372,13 @@ impl DocuGraphServer {
         }
 
         let budget = ContextBudget {
-            max_tokens: params.0.max_tokens.unwrap_or(1200),
-            max_chunks: params.0.max_items.unwrap_or(4),
+            max_tokens: bounded(params.0.max_tokens, 1200, MAX_CONTEXT_TOKENS),
+            max_chunks: bounded(params.0.max_items, 4, MAX_CONTEXT_CHUNKS),
             compact: true,
         };
 
         let retriever = HybridRetriever::build(&docs, None, None);
-        let hits = retriever.search(query, budget.max_chunks * 2);
+        let hits = retriever.search(query, budget.max_chunks.saturating_mul(2));
         let bundle = ContextBuilder::build_evidence(query, &hits, budget);
         Ok(bundle.to_markdown())
     }
@@ -392,42 +392,80 @@ impl DocuGraphServer {
         &self,
         params: Parameters<DocumentReadPagesParams>,
     ) -> ToolResult {
-        let max_chars = params.0.max_chars.unwrap_or(8000);
-        let doc = self.require_document(&params.0.document_id)?;
+        let DocumentReadPagesParams {
+            document_id,
+            page_start,
+            page_end,
+            max_chars,
+        } = params.0;
+        let max_chars = bounded(max_chars, 8000, MAX_READ_CHARS);
+        let doc = self.require_document(&document_id)?;
+
+        if page_start == 0 {
+            return Err(ToolError::new(
+                "page_start must be at least 1: pages are numbered from 1.",
+            ));
+        }
+        if page_start > page_end {
+            return Err(ToolError::new(format!(
+                "Invalid page range {page_start}-{page_end}: page_start must not be greater than page_end."
+            )));
+        }
+        let total = page_count(&doc);
+        if page_start > total {
+            return Err(ToolError::new(format!(
+                "Page range {page_start}-{page_end} is empty: document '{}' has {total} pages.",
+                doc.id
+            )));
+        }
+        // Clamp the end and walk only the pages that exist, so an open-ended range such as
+        // page_end = u32::MAX costs the same as reading up to the last page.
+        let last_page = page_end.min(total);
+        let pages = doc.pages_in_range(page_start, last_page);
+        if pages.is_empty() {
+            return Err(ToolError::new(format!(
+                "Page range {page_start}-{last_page} is empty: document '{}' has no extracted pages in it.",
+                doc.id
+            )));
+        }
 
         let mut out = String::new();
         out.push_str(&format!(
             "# Lectura de Páginas: {} (pp. {}-{})\n\n",
-            doc.metadata.title, params.0.page_start, params.0.page_end
+            doc.metadata.title, page_start, last_page
         ));
+        if last_page < page_end {
+            out.push_str(&format!(
+                "*(page_end {page_end} ajustado a la última página del documento: {last_page})*\n\n"
+            ));
+        }
 
         let mut chars_count = 0;
-        for p in params.0.page_start..=params.0.page_end {
-            if let Some(page) = doc.get_page(p) {
-                let page_header = if page.kind == PageKind::ScannedImage {
-                    format!(
-                        "--- Página {} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
-                        p
-                    )
-                } else if page.untrusted_text_detected {
-                    format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
-                } else if page.kind == PageKind::Empty {
-                    format!("--- Página {} [Página en Blanco] ---\n", p)
-                } else {
-                    format!("--- Página {} ---\n", p)
-                };
-                if chars_count + page_header.len() + page.text.len() > max_chars {
-                    let remaining = max_chars.saturating_sub(chars_count + page_header.len());
-                    out.push_str(&page_header);
-                    out.push_str(&page.text.chars().take(remaining).collect::<String>());
-                    out.push_str("\n\n*(Límite de caracteres alcanzado)*\n");
-                    break;
-                }
+        for page in pages {
+            let p = page.page_number;
+            let page_header = if page.kind == PageKind::ScannedImage {
+                format!(
+                    "--- Página {} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
+                    p
+                )
+            } else if page.untrusted_text_detected {
+                format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
+            } else if page.kind == PageKind::Empty {
+                format!("--- Página {} [Página en Blanco] ---\n", p)
+            } else {
+                format!("--- Página {} ---\n", p)
+            };
+            if chars_count + page_header.len() + page.text.len() > max_chars {
+                let remaining = max_chars.saturating_sub(chars_count + page_header.len());
                 out.push_str(&page_header);
-                out.push_str(&page.text);
-                out.push_str("\n\n");
-                chars_count += page_header.len() + page.text.len();
+                out.push_str(&page.text.chars().take(remaining).collect::<String>());
+                out.push_str("\n\n*(Límite de caracteres alcanzado)*\n");
+                break;
             }
+            out.push_str(&page_header);
+            out.push_str(&page.text);
+            out.push_str("\n\n");
+            chars_count += page_header.len() + page.text.len();
         }
         Ok(out)
     }
@@ -637,7 +675,7 @@ impl DocuGraphServer {
     ) -> ToolResult {
         let doc_id = &params.0.document_id;
         let name_or_id = &params.0.name_or_id;
-        let max_bytes = params.0.max_bytes.unwrap_or(524_288); // 512 KB default limit
+        let max_bytes = bounded(params.0.max_bytes, 524_288, MAX_ATTACHMENT_BYTES);
 
         let doc = self.require_document(doc_id)?;
         let att = doc

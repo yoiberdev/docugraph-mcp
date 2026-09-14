@@ -3,6 +3,22 @@
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
+/// Largest `limit` accepted by `document_search` and `document_search_hybrid`.
+pub const MAX_SEARCH_LIMIT: usize = 50;
+/// Largest `max_tokens` accepted by the section, context and evidence tools.
+pub const MAX_CONTEXT_TOKENS: usize = 16_000;
+/// Largest `max_chunks` / `max_items` accepted by the context and evidence tools.
+pub const MAX_CONTEXT_CHUNKS: usize = 20;
+/// Largest `max_chars` accepted by `document_read_pages`.
+pub const MAX_READ_CHARS: usize = 64_000;
+/// Largest `max_bytes` accepted by `document_read_attachment` (1 MiB).
+pub const MAX_ATTACHMENT_BYTES: usize = 1_048_576;
+
+/// Resolve an optional size argument: `default` when absent, otherwise clamped to `1..=max`.
+pub fn bounded(value: Option<usize>, default: usize, max: usize) -> usize {
+    value.unwrap_or(default).clamp(1, max)
+}
+
 /// Parameters for `document_ping`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PingParams {
@@ -33,7 +49,7 @@ pub struct DocumentSearchParams {
     pub query: String,
     /// Optional filter for a specific document ID (unknown IDs return an error)
     pub document_id: Option<String>,
-    /// Maximum number of results to return (default: 5)
+    /// Maximum number of results to return (default: 5, max: 50)
     pub limit: Option<usize>,
 }
 
@@ -44,7 +60,7 @@ pub struct DocumentSearchHybridParams {
     pub query: String,
     /// Optional filter for a specific document ID (unknown IDs return an error)
     pub document_id: Option<String>,
-    /// Maximum number of results to return (default: 5)
+    /// Maximum number of results to return (default: 5, max: 50)
     pub limit: Option<usize>,
     /// Weight for BM25 keyword score (0.0 to 1.0, default: 0.5)
     pub bm25_weight: Option<f32>,
@@ -63,7 +79,7 @@ pub struct DocumentGetSectionParams {
     pub section_id: String,
     /// Include parent section header context (default: true)
     pub include_parent: Option<bool>,
-    /// Maximum estimated tokens to return (default: 1500)
+    /// Maximum estimated tokens to return (default: 1500, max: 16000)
     pub max_tokens: Option<usize>,
 }
 
@@ -74,9 +90,9 @@ pub struct DocumentGetContextParams {
     pub query: String,
     /// Optional document identifier filter (unknown IDs return an error)
     pub document_id: Option<String>,
-    /// Maximum estimated tokens in the response (default: 1500)
+    /// Maximum estimated tokens in the response (default: 1500, max: 16000)
     pub max_tokens: Option<usize>,
-    /// Maximum number of chunks to include (default: 5)
+    /// Maximum number of chunks to include (default: 5, max: 20)
     pub max_chunks: Option<usize>,
 }
 
@@ -87,9 +103,9 @@ pub struct DocumentGetEvidenceParams {
     pub query: String,
     /// Optional document identifier filter (unknown IDs return an error)
     pub document_id: Option<String>,
-    /// Maximum tokens budget for evidence (default: 1200)
+    /// Maximum tokens budget for evidence (default: 1200, max: 16000)
     pub max_tokens: Option<usize>,
-    /// Maximum evidence snippets (default: 4)
+    /// Maximum evidence snippets (default: 4, max: 20)
     pub max_items: Option<usize>,
 }
 
@@ -98,11 +114,11 @@ pub struct DocumentGetEvidenceParams {
 pub struct DocumentReadPagesParams {
     /// Document identifier
     pub document_id: String,
-    /// Start page number (1-indexed, inclusive)
+    /// Start page number (1-indexed, inclusive, must not exceed page_end or the last page)
     pub page_start: u32,
-    /// End page number (1-indexed, inclusive)
+    /// End page number (1-indexed, inclusive; values past the last page are clamped to it)
     pub page_end: u32,
-    /// Maximum characters to return to prevent context explosion (default: 8000)
+    /// Maximum characters to return to prevent context explosion (default: 8000, max: 64000)
     pub max_chars: Option<usize>,
 }
 
@@ -313,7 +329,7 @@ pub struct DocumentReadAttachmentParams {
     pub document_id: String,
     /// Filename or attachment identifier to read
     pub name_or_id: String,
-    /// Maximum bytes of content to return (default: 524288 = 512KB)
+    /// Maximum bytes of content to return (default: 524288 = 512 KB, max: 1048576 = 1 MiB)
     pub max_bytes: Option<usize>,
     /// Force output encoding: "text" (UTF-8, default if text) or "base64"
     pub encoding: Option<String>,

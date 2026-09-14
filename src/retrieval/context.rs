@@ -183,25 +183,24 @@ impl ContextBuilder {
         out.push_str("### Contenido:\n");
         let mut accumulated_tokens = estimate_tokens(&out);
 
-        for p in node.page_start..=node.page_end {
-            if let Some(page) = doc.get_page(p) {
-                let page_tokens = estimate_tokens(&page.text);
-                if accumulated_tokens + page_tokens > budget.max_tokens {
-                    // Budget reached: take a slice
-                    let remaining_tokens = budget.max_tokens.saturating_sub(accumulated_tokens);
-                    let allowed_chars = (remaining_tokens as f32 * CHARS_PER_TOKEN) as usize;
-                    let slice: String = page.text.chars().take(allowed_chars).collect();
-                    out.push_str(&format!("\n--- [Página {} (Parcial)] ---\n", p));
-                    out.push_str(&slice);
-                    out.push_str(
-                        "\n\n*(Contenido podado por límite de presupuesto de contexto)*\n",
-                    );
-                    break;
-                } else {
-                    out.push_str(&format!("\n--- [Página {}] ---\n", p));
-                    out.push_str(&page.text);
-                    accumulated_tokens += page_tokens;
-                }
+        // Outline ranges come from the PDF, so walk the pages that exist rather than every
+        // number up to page_end: a broken outline can claim a section ends at u32::MAX.
+        for page in doc.pages_in_range(node.page_start, node.page_end) {
+            let p = page.page_number;
+            let page_tokens = estimate_tokens(&page.text);
+            if accumulated_tokens + page_tokens > budget.max_tokens {
+                // Budget reached: take a slice
+                let remaining_tokens = budget.max_tokens.saturating_sub(accumulated_tokens);
+                let allowed_chars = (remaining_tokens as f32 * CHARS_PER_TOKEN) as usize;
+                let slice: String = page.text.chars().take(allowed_chars).collect();
+                out.push_str(&format!("\n--- [Página {} (Parcial)] ---\n", p));
+                out.push_str(&slice);
+                out.push_str("\n\n*(Contenido podado por límite de presupuesto de contexto)*\n");
+                break;
+            } else {
+                out.push_str(&format!("\n--- [Página {}] ---\n", p));
+                out.push_str(&page.text);
+                accumulated_tokens += page_tokens;
             }
         }
 

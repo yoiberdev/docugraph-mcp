@@ -383,6 +383,21 @@ impl Document {
         self.pages.iter().find(|p| p.page_number == page_number)
     }
 
+    /// Pages numbered `start..=end`, sorted by page number and without duplicates.
+    ///
+    /// Walks the extracted pages instead of every number in the range, so a huge `end`
+    /// (such as `u32::MAX` from a tool call or a broken outline) costs nothing extra.
+    pub fn pages_in_range(&self, start: u32, end: u32) -> Vec<&Page> {
+        let mut pages: Vec<&Page> = self
+            .pages
+            .iter()
+            .filter(|p| (start..=end).contains(&p.page_number))
+            .collect();
+        pages.sort_by_key(|p| p.page_number);
+        pages.dedup_by_key(|p| p.page_number);
+        pages
+    }
+
     /// Return all hyperlinks extracted across all pages in this document.
     pub fn all_links(&self) -> Vec<&DocumentLink> {
         self.pages.iter().flat_map(|p| &p.links).collect()

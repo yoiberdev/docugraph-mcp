@@ -83,7 +83,7 @@ impl HybridRetriever {
         }
 
         // 1. BM25 search candidates (take a wider candidate set for reranking)
-        let candidate_limit = (limit * 3).max(20).min(self.bm25.units.len());
+        let candidate_limit = limit.saturating_mul(3).max(20).min(self.bm25.units.len());
         let bm25_hits = self.bm25.search(query, candidate_limit);
 
         let max_bm25 = bm25_hits

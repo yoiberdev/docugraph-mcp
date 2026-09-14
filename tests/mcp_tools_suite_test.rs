@@ -4,6 +4,7 @@ use docugraph::storage::DocumentStore;
 use rmcp::handler::server::tool::IntoCallToolResult;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResponse;
+use std::time::{Duration, Instant};
 
 fn create_test_server() -> DocuGraphServer {
     let store = DocumentStore::new(None); // Pure in-memory for testing
@@ -378,4 +379,175 @@ async fn test_mcp_search_tools_reject_unknown_document_id() {
         .expect("search without document_id");
     let hits: serde_json::Value = serde_json::from_str(&hits).expect("valid JSON hits");
     assert_eq!(hits[0]["document_id"], "git-guide");
+}
+
+#[test]
+fn test_bounded_size_arguments() {
+    assert_eq!(bounded(None, 5, MAX_SEARCH_LIMIT), 5);
+    assert_eq!(bounded(Some(0), 5, MAX_SEARCH_LIMIT), 1);
+    assert_eq!(bounded(Some(7), 5, MAX_SEARCH_LIMIT), 7);
+    assert_eq!(
+        bounded(Some(usize::MAX), 5, MAX_SEARCH_LIMIT),
+        MAX_SEARCH_LIMIT
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_read_pages_clamps_page_end() {
+    let server = create_test_server();
+    let started = Instant::now();
+    let pages_md = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "git-guide".to_string(),
+            page_start: 2,
+            page_end: u32::MAX,
+            max_chars: None,
+        }))
+        .await
+        .expect("an open-ended range is clamped, not rejected");
+
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "page_end=u32::MAX took {:?}",
+        started.elapsed()
+    );
+    assert!(pages_md.contains("(pp. 2-5)"), "{pages_md}");
+    assert!(pages_md.contains("ajustado"), "{pages_md}");
+    assert!(pages_md.contains("Página 3"), "{pages_md}");
+}
+
+#[tokio::test]
+async fn test_mcp_read_pages_rejects_empty_ranges() {
+    let server = create_test_server();
+    let read = |page_start: u32, page_end: u32| {
+        server.document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "git-guide".to_string(),
+            page_start,
+            page_end,
+            max_chars: None,
+        }))
+    };
+
+    let err = read(0, 2).await.expect_err("page 0 does not exist");
+    assert!(err.message().contains("at least 1"), "{err}");
+
+    let err = read(3, 2).await.expect_err("inverted range");
+    assert!(err.message().contains("Invalid page range 3-2"), "{err}");
+
+    let err = read(6, u32::MAX)
+        .await
+        .expect_err("range that starts past the last page");
+    assert!(err.message().contains("has 5 pages"), "{err}");
+
+    // The fixture declares 5 pages but only pages 1-3 have text.
+    let err = read(4, 5).await.expect_err("range without extracted pages");
+    assert!(err.message().contains("is empty"), "{err}");
+}
+
+#[tokio::test]
+async fn test_mcp_oversized_limits_are_clamped() {
+    let server = create_test_server();
+
+    let hits = server
+        .document_search(Parameters(DocumentSearchParams {
+            query: "ramas conflictos git".to_string(),
+            document_id: None,
+            limit: Some(usize::MAX),
+        }))
+        .await
+        .expect("huge limit is clamped");
+    let hits: serde_json::Value = serde_json::from_str(&hits).expect("valid JSON hits");
+    assert!(hits.as_array().unwrap().len() <= MAX_SEARCH_LIMIT);
+
+    let hits = server
+        .document_search_hybrid(Parameters(DocumentSearchHybridParams {
+            query: "ramas conflictos git".to_string(),
+            document_id: None,
+            limit: Some(usize::MAX),
+            bm25_weight: None,
+            semantic_weight: None,
+            structural_weight: None,
+        }))
+        .await
+        .expect("huge limit is clamped");
+    let hits: serde_json::Value = serde_json::from_str(&hits).expect("valid JSON hits");
+    assert!(hits.as_array().unwrap().len() <= MAX_SEARCH_LIMIT);
+
+    let context = server
+        .document_get_context(Parameters(DocumentGetContextParams {
+            query: "ramas locales".to_string(),
+            document_id: None,
+            max_tokens: Some(usize::MAX),
+            max_chunks: Some(usize::MAX),
+        }))
+        .await
+        .expect("huge budgets are clamped");
+    assert!(
+        context.contains(&format!("~{MAX_CONTEXT_TOKENS} tokens")),
+        "{context}"
+    );
+
+    let evidence = server
+        .document_get_evidence(Parameters(DocumentGetEvidenceParams {
+            query: "ramas locales".to_string(),
+            document_id: None,
+            max_tokens: Some(usize::MAX),
+            max_items: Some(usize::MAX),
+        }))
+        .await
+        .expect("huge budgets are clamped");
+    assert!(evidence.contains("Evidencia Recuperada"), "{evidence}");
+
+    let section = server
+        .document_get_section(Parameters(DocumentGetSectionParams {
+            document_id: "git-guide".to_string(),
+            section_id: "ramas-locales".to_string(),
+            include_parent: None,
+            max_tokens: Some(usize::MAX),
+        }))
+        .await
+        .expect("huge budget is clamped");
+    assert!(section.contains("1.1 Ramas Locales"), "{section}");
+}
+
+#[tokio::test]
+async fn test_mcp_get_section_with_broken_page_range_returns_quickly() {
+    let store = DocumentStore::new(None);
+    let mut doc = Document::new(DocumentMetadata {
+        id: "broken-outline".to_string(),
+        title: "Broken Outline".to_string(),
+        total_pages: 2,
+        content_hash: "broken-outline-hash".to_string(),
+        ..Default::default()
+    });
+    doc.add_page(Page::new(1, "Primera página."));
+    doc.add_page(Page::new(2, "Segunda página."));
+    // A malformed outline can claim that a section runs until u32::MAX.
+    doc.sections.push(SectionNode::new(
+        "whole-book",
+        "Whole Book",
+        1,
+        1,
+        u32::MAX,
+        None,
+    ));
+    store.insert(doc).expect("insert must succeed");
+    let server = DocuGraphServer::with_store(store);
+
+    let started = Instant::now();
+    let content = server
+        .document_get_section(Parameters(DocumentGetSectionParams {
+            document_id: "broken-outline".to_string(),
+            section_id: "whole-book".to_string(),
+            include_parent: None,
+            max_tokens: None,
+        }))
+        .await
+        .expect("section exists");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "section with page_end=u32::MAX took {:?}",
+        started.elapsed()
+    );
+    assert!(content.contains("Segunda página."), "{content}");
 }
