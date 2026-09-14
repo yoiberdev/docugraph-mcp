@@ -1,6 +1,6 @@
 //! Extraction and resolution of PDF page annotations and hyperlinks (/Annots, /URI, /GoTo).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use super::model::DocumentLink;
@@ -135,125 +135,216 @@ pub(crate) fn object_to_f32(obj: &lopdf::Object) -> Option<f32> {
     }
 }
 
-/// Resolve a destination object (Array, Reference, Name, or String) to a 1-based page number.
+/// Maximum nesting followed through destination references, name trees and number trees.
+///
+/// Guards against reference cycles and pathologically deep trees in malformed PDFs.
+pub(crate) const MAX_TREE_DEPTH: usize = 32;
+
+/// Resolve a destination object (Array, Reference, Dictionary, Name, or String) to a 1-based page number.
+///
+/// Named destinations are looked up in the catalog `/Dests` dictionary and in the `/Names /Dests`
+/// name tree. A name that is not found resolves to `None`: a destination name is never a page
+/// index, even when it looks numeric (LaTeX/hyperref writes names such as `(0)`, `(15)` or `(1a)`).
 pub fn resolve_dest(
     doc: &lopdf::Document,
     dest_obj: &lopdf::Object,
     page_map: &HashMap<(u32, u16), u32>,
 ) -> Option<u32> {
+    resolve_dest_at_depth(doc, dest_obj, page_map, 0)
+}
+
+fn resolve_dest_at_depth(
+    doc: &lopdf::Document,
+    dest_obj: &lopdf::Object,
+    page_map: &HashMap<(u32, u16), u32>,
+    depth: usize,
+) -> Option<u32> {
+    if depth > MAX_TREE_DEPTH {
+        return None;
+    }
     match dest_obj {
         // 1. Direct array: [page_ref, /XYZ, left, top, zoom] or [page_ref, /Fit]
         lopdf::Object::Array(arr) => {
-            if let Some(first) = arr.first() {
-                if let Ok(target_ref) = first.as_reference() {
-                    if let Some(p) = page_map.get(&target_ref) {
-                        return Some(*p);
-                    }
-                } else if let Ok(idx) = first.as_i64() {
-                    // 0-based page index fallback
-                    return Some((idx as u32) + 1);
-                }
-            }
-            None
-        }
-        // 2. Reference to an array or destination object
-        lopdf::Object::Reference(ref_id) => {
-            if let Ok(resolved_obj) = doc.get_object(*ref_id) {
-                resolve_dest(doc, resolved_obj, page_map)
+            let first = arr.first()?;
+            if let Ok(target_ref) = first.as_reference() {
+                page_map.get(&target_ref).copied()
+            } else if let Ok(idx) = first.as_i64() {
+                // 0-based page index fallback
+                u32::try_from(idx).ok().and_then(|i| i.checked_add(1))
             } else {
                 None
             }
         }
-        // 3. Named destination as Name
-        lopdf::Object::Name(name_bytes) => resolve_named_destination(doc, name_bytes, page_map),
-        // 4. Named destination as String
-        lopdf::Object::String(str_bytes, _) => {
-            if let Some(num) = resolve_named_destination(doc, str_bytes, page_map) {
-                return Some(num);
-            }
-            // Fallback: if string is a numeric page index like "0", "1", "15"
-            if let Some(idx) = std::str::from_utf8(str_bytes)
-                .ok()
-                .and_then(|s| s.parse::<u32>().ok())
-            {
-                return Some(idx + 1);
-            }
-            None
+        // 2. Reference to an array or destination object
+        lopdf::Object::Reference(ref_id) => doc
+            .get_object(*ref_id)
+            .ok()
+            .and_then(|obj| resolve_dest_at_depth(doc, obj, page_map, depth + 1)),
+        // 3. Destination dictionary, as stored in name trees: << /D [page_ref /XYZ ...] >>
+        lopdf::Object::Dictionary(dict) => dict
+            .get(b"D")
+            .ok()
+            .and_then(|d| resolve_dest_at_depth(doc, d, page_map, depth + 1)),
+        // 4. Named destination as Name or String
+        lopdf::Object::Name(name) | lopdf::Object::String(name, _) => {
+            resolve_named_destination_at_depth(doc, name, page_map, depth + 1)
         }
         _ => None,
     }
 }
 
-/// Look up a destination name in the PDF Catalog `/Names /Dests` or Catalog `/Dests`.
+/// Look up a destination name in the PDF Catalog `/Dests` dictionary or the `/Names /Dests` name tree.
 pub fn resolve_named_destination(
     doc: &lopdf::Document,
     dest_name: &[u8],
     page_map: &HashMap<(u32, u16), u32>,
 ) -> Option<u32> {
-    let trailer_root = doc.trailer.get(b"Root").ok()?.as_reference().ok()?;
-    let catalog = doc.get_dictionary(trailer_root).ok()?;
+    resolve_named_destination_at_depth(doc, dest_name, page_map, 0)
+}
+
+fn resolve_named_destination_at_depth(
+    doc: &lopdf::Document,
+    dest_name: &[u8],
+    page_map: &HashMap<(u32, u16), u32>,
+    depth: usize,
+) -> Option<u32> {
+    if depth > MAX_TREE_DEPTH {
+        return None;
+    }
+    let catalog = catalog_dictionary(doc)?;
 
     // Catalog /Dests dictionary (PDF 1.1)
-    if let Ok(dests_obj) = catalog.get(b"Dests") {
-        let dests_dict = match dests_obj {
-            lopdf::Object::Dictionary(dict) => Some(dict),
-            lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
-            _ => None,
-        };
-        if let Some(dict) = dests_dict {
-            let p_num = dict
-                .get(dest_name)
-                .ok()
-                .and_then(|v| v.as_array().ok())
-                .and_then(|arr| arr.first().cloned())
-                .and_then(|o| o.as_reference().ok())
-                .and_then(|r| page_map.get(&r).copied());
-            if p_num.is_some() {
-                return p_num;
-            }
-        }
+    if let Some(value) = catalog
+        .get(b"Dests")
+        .ok()
+        .and_then(|obj| dereference_dictionary(doc, obj))
+        .and_then(|dests| dests.get(dest_name).ok())
+        && let Some(page) = resolve_dest_at_depth(doc, value, page_map, depth + 1)
+    {
+        return Some(page);
     }
 
-    // Catalog /Names /Dests tree (PDF 1.2+)
-    if let Ok(names_obj) = catalog.get(b"Names") {
-        let names_dict = match names_obj {
-            lopdf::Object::Dictionary(dict) => Some(dict),
-            lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
-            _ => None,
-        };
-        if let Some(nd) = names_dict {
-            let dests_node = nd.get(b"Dests").ok();
-            let node_dict = match dests_node {
-                Some(lopdf::Object::Dictionary(dict)) => Some(dict),
-                Some(lopdf::Object::Reference(id)) => doc.get_dictionary(*id).ok(),
-                _ => None,
-            };
-            if let Some(arr) = node_dict
-                .and_then(|d| d.get(b"Names").ok())
-                .and_then(|o| o.as_array().ok())
-            {
-                for chunk in arr.chunks(2) {
-                    if chunk.len() < 2 {
-                        continue;
-                    }
-                    let matches_key = chunk[0].as_str().map(|k| k == dest_name).unwrap_or(false);
-                    if matches_key {
-                        let p_num = chunk[1]
-                            .as_array()
-                            .ok()
-                            .and_then(|arr| arr.first().cloned())
-                            .and_then(|o| o.as_reference().ok())
-                            .and_then(|r| page_map.get(&r).copied());
-                        if p_num.is_some() {
-                            return p_num;
-                        }
-                    }
+    // Catalog /Names /Dests name tree (PDF 1.2+)
+    let tree = catalog
+        .get(b"Names")
+        .ok()
+        .and_then(|obj| dereference_dictionary(doc, obj))
+        .and_then(|names| names.get(b"Dests").ok())
+        .and_then(|obj| dereference_dictionary(doc, obj))?;
+    let value = lookup_name_tree(doc, tree, dest_name)?;
+    resolve_dest_at_depth(doc, value, page_map, depth + 1)
+}
+
+/// Find the value stored under `key` in a PDF name tree (ISO 32000-1, 7.9.6).
+///
+/// Intermediate `/Kids` nodes are followed: producers such as LaTeX/hyperref split the tree once a
+/// document has more than a handful of names. `/Limits` let the walk skip subtrees that cannot
+/// hold the key; if that pruned walk misses (for instance because of wrong limits), the tree is
+/// scanned once more without pruning.
+pub fn lookup_name_tree<'a>(
+    doc: &'a lopdf::Document,
+    root: &'a lopdf::Dictionary,
+    key: &[u8],
+) -> Option<&'a lopdf::Object> {
+    walk_name_tree(doc, root, key, true).or_else(|| walk_name_tree(doc, root, key, false))
+}
+
+fn walk_name_tree<'a>(
+    doc: &'a lopdf::Document,
+    root: &'a lopdf::Dictionary,
+    key: &[u8],
+    use_limits: bool,
+) -> Option<&'a lopdf::Object> {
+    let mut stack = vec![(root, 0usize)];
+    let mut visited = HashSet::new();
+
+    while let Some((node, depth)) = stack.pop() {
+        if let Some(names) = node
+            .get(b"Names")
+            .ok()
+            .and_then(|obj| dereference_array(doc, obj))
+        {
+            let (pairs, _) = names.as_chunks::<2>();
+            for [name, value] in pairs {
+                if name.as_str().is_ok_and(|name| name == key) {
+                    return Some(value);
                 }
             }
+        }
+
+        if depth >= MAX_TREE_DEPTH {
+            continue;
+        }
+        let Some(kids) = node
+            .get(b"Kids")
+            .ok()
+            .and_then(|obj| dereference_array(doc, obj))
+        else {
+            continue;
+        };
+        // Push in reverse so kids are visited in document (sorted) order
+        for kid in kids.iter().rev() {
+            if let Ok(kid_id) = kid.as_reference()
+                && !visited.insert(kid_id)
+            {
+                continue;
+            }
+            let Some(kid_node) = dereference_dictionary(doc, kid) else {
+                continue;
+            };
+            if use_limits && !name_tree_limits_contain(doc, kid_node, key) {
+                continue;
+            }
+            stack.push((kid_node, depth + 1));
         }
     }
 
     None
+}
+
+/// Whether a name tree node's `/Limits [low high]` may contain `key` (true when limits are absent).
+fn name_tree_limits_contain(doc: &lopdf::Document, node: &lopdf::Dictionary, key: &[u8]) -> bool {
+    let Some(limits) = node
+        .get(b"Limits")
+        .ok()
+        .and_then(|obj| dereference_array(doc, obj))
+    else {
+        return true;
+    };
+    match (
+        limits.first().and_then(|o| o.as_str().ok()),
+        limits.get(1).and_then(|o| o.as_str().ok()),
+    ) {
+        (Some(low), Some(high)) => low <= key && key <= high,
+        _ => true,
+    }
+}
+
+/// Return the document catalog (`/Root`) dictionary.
+pub(crate) fn catalog_dictionary(doc: &lopdf::Document) -> Option<&lopdf::Dictionary> {
+    let root = doc.trailer.get(b"Root").ok()?.as_reference().ok()?;
+    doc.get_dictionary(root).ok()
+}
+
+/// Follow indirect references and return the dictionary they point to.
+pub(crate) fn dereference_dictionary<'a>(
+    doc: &'a lopdf::Document,
+    obj: &'a lopdf::Object,
+) -> Option<&'a lopdf::Dictionary> {
+    doc.dereference(obj).ok()?.1.as_dict().ok()
+}
+
+/// Follow indirect references and return the array they point to.
+pub(crate) fn dereference_array<'a>(
+    doc: &'a lopdf::Document,
+    obj: &'a lopdf::Object,
+) -> Option<&'a [lopdf::Object]> {
+    doc.dereference(obj)
+        .ok()?
+        .1
+        .as_array()
+        .ok()
+        .map(Vec::as_slice)
 }
 
 /// Helper to extract string values from `lopdf::Object`, supporting UTF-16BE decoding.
@@ -273,15 +364,16 @@ pub fn object_to_string(obj: &lopdf::Object) -> Option<String> {
 
 /// Decode raw PDF string bytes handling UTF-16BE (with BOM \xFE\xFF) and UTF-8 lossy.
 pub fn decode_pdf_string(bytes: &[u8]) -> String {
-    if bytes.starts_with(&[0xFE, 0xFF]) {
-        let mut u16_chars = Vec::with_capacity(bytes.len().saturating_sub(2) / 2);
-        let mut i = 2;
-        while i + 1 < bytes.len() {
-            u16_chars.push(u16::from_be_bytes([bytes[i], bytes[i + 1]]));
-            i += 2;
-        }
-        String::from_utf16_lossy(&u16_chars).trim().to_string()
+    decode_pdf_text(bytes).trim().to_string()
+}
+
+/// Decode raw PDF string bytes like [`decode_pdf_string`], keeping surrounding whitespace.
+pub(crate) fn decode_pdf_text(bytes: &[u8]) -> String {
+    if let Some(utf16) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let (pairs, _) = utf16.as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|&pair| u16::from_be_bytes(pair)).collect();
+        String::from_utf16_lossy(&units)
     } else {
-        String::from_utf8_lossy(bytes).trim().to_string()
+        String::from_utf8_lossy(bytes).into_owned()
     }
 }
