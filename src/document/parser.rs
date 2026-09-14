@@ -292,7 +292,10 @@ fn resolve_named_destination(
                 .and_then(|d| d.get(b"Names").ok())
                 .and_then(|o| o.as_array().ok())
             {
-                for chunk in arr.chunks_exact(2) {
+                for chunk in arr.chunks(2) {
+                    if chunk.len() < 2 {
+                        continue;
+                    }
                     let matches_key = chunk[0].as_str().map(|k| k == dest_name).unwrap_or(false);
                     if matches_key {
                         let p_num = chunk[1]
@@ -363,10 +366,12 @@ fn object_to_string(obj: &lopdf::Object) -> Option<String> {
 /// Decode raw PDF string bytes handling UTF-16BE (with BOM \xFE\xFF) and UTF-8.
 fn decode_pdf_string(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFE, 0xFF]) {
-        let u16_chars: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
-            .collect();
+        let mut u16_chars = Vec::with_capacity((bytes.len().saturating_sub(2)) / 2);
+        let mut i = 2;
+        while i + 1 < bytes.len() {
+            u16_chars.push(u16::from_be_bytes([bytes[i], bytes[i + 1]]));
+            i += 2;
+        }
         String::from_utf16_lossy(&u16_chars).trim().to_string()
     } else {
         String::from_utf8_lossy(bytes).trim().to_string()
