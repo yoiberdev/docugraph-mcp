@@ -1,7 +1,9 @@
 use docugraph::document::model::{Document, DocumentMetadata, Page, SectionNode};
 use docugraph::mcp::{DocuGraphServer, tools::*};
 use docugraph::storage::DocumentStore;
+use rmcp::handler::server::tool::IntoCallToolResult;
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::CallToolResponse;
 
 fn create_test_server() -> DocuGraphServer {
     let store = DocumentStore::new(None); // Pure in-memory for testing
@@ -69,7 +71,8 @@ async fn test_mcp_document_outline() {
             document_id: "git-guide".to_string(),
             max_depth: Some(2),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let tree: serde_json::Value = serde_json::from_str(&outline_json).expect("valid JSON tree");
     assert!(tree.is_array());
@@ -87,7 +90,8 @@ async fn test_mcp_document_search_bm25() {
             document_id: Some("git-guide".to_string()),
             limit: Some(3),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hits");
     assert!(hits.is_array());
@@ -107,7 +111,8 @@ async fn test_mcp_document_search_hybrid() {
             semantic_weight: Some(0.2),
             structural_weight: Some(0.2),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hybrid hits");
     assert!(hits.is_array());
@@ -125,7 +130,8 @@ async fn test_mcp_document_get_section() {
             include_parent: Some(true),
             max_tokens: Some(500),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     assert!(content.contains("1.1 Ramas Locales"));
     assert!(content.contains("Sección Padre"));
@@ -142,7 +148,8 @@ async fn test_mcp_document_get_evidence() {
             max_tokens: Some(500),
             max_items: Some(2),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     assert!(evidence_md.contains("Evidencia Recuperada"));
     assert!(evidence_md.contains("[Doc: git-guide"));
@@ -158,7 +165,8 @@ async fn test_mcp_document_read_pages() {
             page_end: 3,
             max_chars: Some(1000),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     assert!(pages_md.contains("Página 2"));
     assert!(pages_md.contains("Página 3"));
@@ -175,8 +183,123 @@ async fn test_mcp_document_get_context() {
             max_tokens: Some(600),
             max_chunks: Some(2),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     assert!(context_md.contains("Contexto Conceptual"));
     assert!(context_md.contains("1.1 Ramas Locales") || context_md.contains("git branch"));
+}
+
+#[tokio::test]
+async fn test_mcp_domain_errors_are_tool_errors() {
+    let server = create_test_server();
+
+    let err = server
+        .document_info(Parameters(DocumentInfoParams {
+            document_id: "missing-doc".to_string(),
+        }))
+        .await
+        .expect_err("unknown document must be a tool error");
+    assert!(err.message().contains("'missing-doc' not found"), "{err}");
+    assert!(
+        err.message().contains("'git-guide'"),
+        "error should list the available ids: {err}"
+    );
+
+    let err = server
+        .document_outline(Parameters(DocumentOutlineParams {
+            document_id: "missing-doc".to_string(),
+            max_depth: None,
+        }))
+        .await
+        .expect_err("unknown document must be a tool error");
+    assert!(err.message().contains("not found"), "{err}");
+
+    let err = server
+        .document_get_section(Parameters(DocumentGetSectionParams {
+            document_id: "git-guide".to_string(),
+            section_id: "no-such-section".to_string(),
+            include_parent: None,
+            max_tokens: None,
+        }))
+        .await
+        .expect_err("unknown section must be a tool error");
+    assert!(
+        err.message()
+            .contains("Section 'no-such-section' not found"),
+        "{err}"
+    );
+
+    let err = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "missing-doc".to_string(),
+            page_start: 1,
+            page_end: 1,
+            max_chars: None,
+        }))
+        .await
+        .expect_err("unknown document must be a tool error");
+    assert!(err.message().contains("not found"), "{err}");
+
+    let err = server
+        .document_render_page(Parameters(RenderPageParams {
+            document_id: "git-guide".to_string(),
+            page_number: 99,
+            max_width: None,
+        }))
+        .await
+        .expect_err("missing page must be a tool error");
+    assert!(err.message().contains("Page 99 does not exist"), "{err}");
+
+    let err = server
+        .document_get_forms(Parameters(DocumentGetFormsParams {
+            document_id: "git-guide".to_string(),
+            page: Some(0),
+            filled_only: None,
+        }))
+        .await
+        .expect_err("page 0 must be a tool error");
+    assert!(err.message().contains("Page 0 does not exist"), "{err}");
+
+    let err = server
+        .document_get_attachments(Parameters(DocumentGetAttachmentsParams {
+            document_id: "missing-doc".to_string(),
+        }))
+        .await
+        .expect_err("unknown document must be a tool error");
+    assert!(err.message().contains("not found"), "{err}");
+
+    let err = server
+        .document_read_attachment(Parameters(DocumentReadAttachmentParams {
+            document_id: "git-guide".to_string(),
+            name_or_id: "invoice.xml".to_string(),
+            max_bytes: None,
+            encoding: None,
+        }))
+        .await
+        .expect_err("unknown attachment must be a tool error");
+    assert!(err.message().contains("has no attachments"), "{err}");
+}
+
+#[tokio::test]
+async fn test_mcp_tool_error_is_sent_with_is_error() {
+    let server = create_test_server();
+    let result = server
+        .document_info(Parameters(DocumentInfoParams {
+            document_id: "missing-doc".to_string(),
+        }))
+        .await;
+
+    let response = result
+        .into_call_tool_result()
+        .expect("a domain error is a tool result, not a JSON-RPC error");
+    let CallToolResponse::Complete(call_result) = response else {
+        panic!("expected a complete tool result");
+    };
+    assert_eq!(call_result.is_error, Some(true));
+
+    let wire = serde_json::to_value(&call_result).expect("serialize tool result");
+    assert_eq!(wire["isError"], true);
+    let text = wire["content"][0]["text"].as_str().expect("text content");
+    assert!(text.contains("'missing-doc' not found"), "{text}");
 }

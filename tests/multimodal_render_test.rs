@@ -151,7 +151,10 @@ async fn test_mcp_document_render_page_tool() {
         page_number: 1,
         max_width: Some(800),
     };
-    let json_resp = server.document_render_page(Parameters(params)).await;
+    let json_resp = server
+        .document_render_page(Parameters(params))
+        .await
+        .expect("render of an existing page should succeed");
 
     let parsed: serde_json::Value =
         serde_json::from_str(&json_resp).expect("Valid JSON response from tool");
@@ -178,11 +181,22 @@ async fn test_mcp_document_render_page_tool() {
         page_number: 1,
         max_width: None,
     };
-    let err_json = server
+    let err = server
         .document_render_page(Parameters(invalid_params))
-        .await;
-    let err_parsed: serde_json::Value = serde_json::from_str(&err_json).expect("Valid error JSON");
-    assert!(err_parsed["error"].as_str().unwrap().contains("not found"));
+        .await
+        .expect_err("unknown document must be a tool error");
+    assert!(err.message().contains("not found"), "{err}");
+
+    // Test requesting a page the document does not have
+    let err = server
+        .document_render_page(Parameters(RenderPageParams {
+            document_id: "multimodal-doc".to_string(),
+            page_number: 2,
+            max_width: None,
+        }))
+        .await
+        .expect_err("missing page must be a tool error");
+    assert!(err.message().contains("Page 2 does not exist"), "{err}");
 }
 
 #[test]

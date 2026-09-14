@@ -237,7 +237,8 @@ async fn test_mcp_server_scanned_warnings_in_tools() {
         .document_info(Parameters(DocumentInfoParams {
             document_id: "doc-with-scans".to_string(),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
     let info: DocumentInfoResult =
         serde_json::from_str(&info_json).expect("valid DocumentInfoResult");
     assert_eq!(info.scanned_pages_count, 1);
@@ -252,7 +253,8 @@ async fn test_mcp_server_scanned_warnings_in_tools() {
             page_end: 2,
             max_chars: Some(4000),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     assert!(
         read_json.contains("--- Página 1 [📷 Imagen Escaneada / Sin Capa de Texto] ---"),

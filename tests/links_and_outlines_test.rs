@@ -355,7 +355,8 @@ async fn test_mcp_tool_document_get_links() {
             page: None,
             kind: Some("all".to_string()),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let res: DocumentGetLinksResult =
         serde_json::from_str(&all_links_json).expect("valid JSON result");
@@ -370,7 +371,8 @@ async fn test_mcp_tool_document_get_links() {
             page: None,
             kind: Some("external".to_string()),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
     let ext_res: DocumentGetLinksResult =
         serde_json::from_str(&ext_json).expect("valid JSON result");
     assert_eq!(ext_res.total_links, 1);
@@ -387,7 +389,8 @@ async fn test_mcp_tool_document_get_links() {
             page: None,
             kind: Some("internal".to_string()),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
     let int_res: DocumentGetLinksResult =
         serde_json::from_str(&int_json).expect("valid JSON result");
     assert_eq!(int_res.total_links, 1);
@@ -401,7 +404,8 @@ async fn test_mcp_tool_document_get_links() {
             page: Some(2),
             kind: None,
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
     let p2_res: DocumentGetLinksResult = serde_json::from_str(&p2_json).expect("valid JSON result");
     assert_eq!(p2_res.total_links, 1);
     assert_eq!(p2_res.links[0].page_number, 2);
@@ -409,12 +413,25 @@ async fn test_mcp_tool_document_get_links() {
     assert_eq!(p2_res.links[0].named_target.as_deref(), Some("appendix-b"));
 
     // 5. Query non-existent document
-    let not_found_json = server
+    let err = server
         .document_get_links(Parameters(DocumentGetLinksParams {
             document_id: "non-existent".to_string(),
             page: None,
             kind: None,
         }))
-        .await;
-    assert!(not_found_json.contains("not found"));
+        .await
+        .expect_err("unknown document must be a tool error");
+    assert!(err.message().contains("not found"), "{err}");
+    assert!(err.message().contains("'links-demo-doc'"), "{err}");
+
+    // 6. Query a page the document does not have
+    let err = server
+        .document_get_links(Parameters(DocumentGetLinksParams {
+            document_id: "links-demo-doc".to_string(),
+            page: Some(4),
+            kind: None,
+        }))
+        .await
+        .expect_err("missing page must be a tool error");
+    assert!(err.message().contains("valid pages are 1-3"), "{err}");
 }

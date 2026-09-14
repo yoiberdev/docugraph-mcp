@@ -454,7 +454,8 @@ async fn test_mcp_document_get_forms_and_filtering() {
             page: None,
             filled_only: None,
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let res: DocumentGetFormsResult = serde_json::from_str(&json_str).expect("parse JSON");
     assert_eq!(res.total_fields, 3);
@@ -467,7 +468,8 @@ async fn test_mcp_document_get_forms_and_filtering() {
             page: Some(1),
             filled_only: None,
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let res_p1: DocumentGetFormsResult = serde_json::from_str(&json_p1).expect("parse JSON");
     assert_eq!(res_p1.total_fields, 2);
@@ -480,7 +482,8 @@ async fn test_mcp_document_get_forms_and_filtering() {
             page: None,
             filled_only: Some(true),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let res_filled: DocumentGetFormsResult =
         serde_json::from_str(&json_filled).expect("parse JSON");
@@ -493,7 +496,8 @@ async fn test_mcp_document_get_forms_and_filtering() {
         .document_info(Parameters(DocumentInfoParams {
             document_id: "doc_with_forms".to_string(),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let info_res: DocumentInfoResult = serde_json::from_str(&info_str).expect("parse info JSON");
     assert_eq!(info_res.title, "Tax Form 1040");

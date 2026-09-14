@@ -357,7 +357,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
         .document_get_attachments(Parameters(DocumentGetAttachmentsParams {
             document_id: "doc_with_attachments".to_string(),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let list_res: DocumentGetAttachmentsResult =
         serde_json::from_str(&list_json).expect("parse list JSON");
@@ -374,7 +375,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
             max_bytes: None,
             encoding: None,
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let read_xml_res: DocumentReadAttachmentResult =
         serde_json::from_str(&read_xml_json).expect("parse read XML JSON");
@@ -391,7 +393,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
             max_bytes: None,
             encoding: None,
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let read_bin_res: DocumentReadAttachmentResult =
         serde_json::from_str(&read_bin_json).expect("parse read binary JSON");
@@ -407,7 +410,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
             max_bytes: Some(10),
             encoding: None,
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let read_trunc_res: DocumentReadAttachmentResult =
         serde_json::from_str(&read_trunc_json).expect("parse read truncated JSON");
@@ -419,9 +423,23 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
         .document_info(Parameters(DocumentInfoParams {
             document_id: "doc_with_attachments".to_string(),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let info_res: DocumentInfoResult = serde_json::from_str(&info_json).expect("parse info JSON");
     assert!(info_res.has_attachments);
     assert_eq!(info_res.total_attachments, 2);
+
+    // 6. Unknown attachment: tool error that names the attachments that exist
+    let err = server
+        .document_read_attachment(Parameters(DocumentReadAttachmentParams {
+            document_id: "doc_with_attachments".to_string(),
+            name_or_id: "missing.csv".to_string(),
+            max_bytes: None,
+            encoding: None,
+        }))
+        .await
+        .expect_err("unknown attachment must be a tool error");
+    assert!(err.message().contains("'missing.csv' not found"), "{err}");
+    assert!(err.message().contains("'factur-x.xml'"), "{err}");
 }

@@ -100,7 +100,8 @@ async fn test_document_info_tool() {
         .document_info(Parameters(DocumentInfoParams {
             document_id: "test_doc_gof".to_string(),
         }))
-        .await;
+        .await
+        .expect("tool call should succeed");
 
     let parsed: serde_json::Value = serde_json::from_str(&info_json).expect("valid JSON object");
     assert_eq!(parsed["id"], "test_doc_gof");
