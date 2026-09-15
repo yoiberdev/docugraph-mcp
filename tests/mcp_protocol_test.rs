@@ -100,3 +100,106 @@ async fn test_document_info_tool() {
     assert_eq!(parsed["title"], "GoF Design Patterns");
     assert!(parsed["sections_preview"].is_array());
 }
+
+#[tokio::test]
+async fn test_document_list_deterministic_order() {
+    let server = DocuGraphServer::new();
+    for id in ["zeta-doc", "alpha-doc", "mid-doc"] {
+        server
+            .register_document(Document::new(DocumentMetadata {
+                id: id.to_string(),
+                title: format!("Doc {}", id),
+                total_pages: 1,
+                content_hash: format!("hash-{}", id),
+                indexed_at: "2026-09-14T00:00:00Z".to_string(),
+                ..Default::default()
+            }))
+            .await;
+    }
+
+    let list_json = server.document_list().await;
+    let list: Vec<serde_json::Value> = serde_json::from_str(&list_json).expect("valid JSON array");
+    let ids: Vec<&str> = list.iter().map(|d| d["id"].as_str().unwrap()).collect();
+
+    // Verify list is strictly sorted alphabetically by id
+    let mut sorted_ids = ids.clone();
+    sorted_ids.sort();
+    assert_eq!(
+        ids, sorted_ids,
+        "document_list must be strictly deterministic and sorted by id"
+    );
+}
+
+#[tokio::test]
+async fn test_read_pages_validation_and_span_limit() {
+    use docugraph::mcp::tools::DocumentReadPagesParams;
+
+    let server = DocuGraphServer::new();
+    server
+        .register_document(Document::new(DocumentMetadata {
+            id: "big-book".to_string(),
+            title: "Big Technical Book".to_string(),
+            total_pages: 100,
+            content_hash: "hash-big".to_string(),
+            indexed_at: "2026-09-14T00:00:00Z".to_string(),
+            ..Default::default()
+        }))
+        .await;
+
+    // 1. page_start == 0 is rejected with Err (isError in MCP)
+    let err_zero = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "big-book".to_string(),
+            page_start: 0,
+            page_end: 5,
+            max_chars: None,
+        }))
+        .await;
+    assert!(err_zero.is_err());
+    assert!(err_zero.unwrap_err().contains("page_start must be >= 1"));
+
+    // 2. page_start > page_end is rejected with Err
+    let err_inverted = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "big-book".to_string(),
+            page_start: 10,
+            page_end: 5,
+            max_chars: None,
+        }))
+        .await;
+    assert!(err_inverted.is_err());
+    assert!(
+        err_inverted
+            .unwrap_err()
+            .contains("cannot be greater than page_end")
+    );
+
+    // 3. Document not found is rejected with Err
+    let err_missing = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "non-existent".to_string(),
+            page_start: 1,
+            page_end: 5,
+            max_chars: None,
+        }))
+        .await;
+    assert!(err_missing.is_err());
+    assert!(err_missing.unwrap_err().contains("not found"));
+
+    // 4. Requesting > 30 pages applies the 30-page span cap
+    let capped_read = server
+        .document_read_pages(Parameters(DocumentReadPagesParams {
+            document_id: "big-book".to_string(),
+            page_start: 1,
+            page_end: 80,
+            max_chars: None,
+        }))
+        .await
+        .expect("read succeeds with range cap applied");
+
+    assert!(
+        capped_read.contains("pp. 1-30"),
+        "Must cap end page to start + 29 (30 pages max)"
+    );
+    assert!(capped_read.contains("Rango limitado a 30 páginas"));
+}

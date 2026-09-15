@@ -251,7 +251,8 @@ async fn test_mcp_server_scanned_warnings_in_tools() {
             page_end: 2,
             max_chars: Some(4000),
         }))
-        .await;
+        .await
+        .expect("read_pages must succeed for valid range");
 
     assert!(
         read_json.contains("--- Página 1 [📷 Imagen Escaneada / Sin Capa de Texto] ---"),

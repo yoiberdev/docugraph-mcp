@@ -295,7 +295,7 @@ impl DocuGraphServer {
     pub async fn document_get_section(
         &self,
         params: Parameters<DocumentGetSectionParams>,
-    ) -> String {
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
         let section_id = &params.0.section_id;
         let include_parent = params.0.include_parent.unwrap_or(true);
@@ -307,11 +307,13 @@ impl DocuGraphServer {
 
         if let Some(doc) = self.store.get(doc_id) {
             match ContextBuilder::expand_section_context(&doc, section_id, include_parent, budget) {
-                Some(content) => content,
-                None => format!("Error: Section '{section_id}' not found in document '{doc_id}'."),
+                Some(content) => Ok(content),
+                None => Err(format!(
+                    "Error: Section '{section_id}' not found in document '{doc_id}'."
+                )),
             }
         } else {
-            format!("Error: Document '{doc_id}' not found.")
+            Err(format!("Error: Document '{doc_id}' not found."))
         }
     }
 
@@ -373,49 +375,86 @@ impl DocuGraphServer {
         name = "document_read_pages",
         description = "Read sequential pages directly from a document with strict character bounds."
     )]
-    pub async fn document_read_pages(&self, params: Parameters<DocumentReadPagesParams>) -> String {
+    pub async fn document_read_pages(
+        &self,
+        params: Parameters<DocumentReadPagesParams>,
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
-        let max_chars = params.0.max_chars.unwrap_or(8000);
+        let max_chars = params.0.max_chars.unwrap_or(8000).min(50000);
 
-        if let Some(doc) = self.store.get(doc_id) {
-            let mut out = String::new();
-            out.push_str(&format!(
-                "# Lectura de Páginas: {} (pp. {}-{})\n\n",
-                doc.metadata.title, params.0.page_start, params.0.page_end
-            ));
-
-            let mut chars_count = 0;
-            for p in params.0.page_start..=params.0.page_end {
-                if let Some(page) = doc.get_page(p) {
-                    let page_header = if page.kind == PageKind::ScannedImage {
-                        format!(
-                            "--- Página {} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
-                            p
-                        )
-                    } else if page.untrusted_text_detected {
-                        format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
-                    } else if page.kind == PageKind::Empty {
-                        format!("--- Página {} [Página en Blanco] ---\n", p)
-                    } else {
-                        format!("--- Página {} ---\n", p)
-                    };
-                    if chars_count + page_header.len() + page.text.len() > max_chars {
-                        let remaining = max_chars.saturating_sub(chars_count + page_header.len());
-                        out.push_str(&page_header);
-                        out.push_str(&page.text.chars().take(remaining).collect::<String>());
-                        out.push_str("\n\n*(Límite de caracteres alcanzado)*\n");
-                        break;
-                    }
-                    out.push_str(&page_header);
-                    out.push_str(&page.text);
-                    out.push_str("\n\n");
-                    chars_count += page_header.len() + page.text.len();
-                }
-            }
-            out
-        } else {
-            format!("Error: Document '{doc_id}' not found.")
+        if params.0.page_start == 0 {
+            return Err("page_start must be >= 1 (PDF pages are 1-indexed)".to_string());
         }
+        if params.0.page_start > params.0.page_end {
+            return Err(format!(
+                "page_start ({}) cannot be greater than page_end ({})",
+                params.0.page_start, params.0.page_end
+            ));
+        }
+
+        let Some(doc) = self.store.get(doc_id) else {
+            return Err(format!("Document '{doc_id}' not found."));
+        };
+
+        if params.0.page_start > doc.metadata.total_pages {
+            return Err(format!(
+                "page_start ({}) exceeds total pages in document ({})",
+                params.0.page_start, doc.metadata.total_pages
+            ));
+        }
+
+        // Enforce maximum page span per call (tope de 30 páginas por llamada)
+        let requested_end = params.0.page_end.min(doc.metadata.total_pages);
+        let max_page_span = 30;
+        let (page_end, range_capped) =
+            if requested_end.saturating_sub(params.0.page_start) + 1 > max_page_span {
+                (params.0.page_start + max_page_span - 1, true)
+            } else {
+                (requested_end, false)
+            };
+
+        let mut out = String::new();
+        out.push_str(&format!(
+            "# Lectura de Páginas: {} (pp. {}-{})\n\n",
+            doc.metadata.title, params.0.page_start, page_end
+        ));
+
+        if range_capped {
+            out.push_str(&format!(
+                "> [!NOTE]\n> Rango limitado a {} páginas por llamada (solicitado hasta p. {}, ajustado a p. {}). Para leer más páginas, realice llamadas sucesivas.\n\n",
+                max_page_span, params.0.page_end, page_end
+            ));
+        }
+
+        let mut chars_count = 0;
+        for p in params.0.page_start..=page_end {
+            if let Some(page) = doc.get_page(p) {
+                let page_header = if page.kind == PageKind::ScannedImage {
+                    format!(
+                        "--- Página {} [📷 Imagen Escaneada / Sin Capa de Texto] ---\n",
+                        p
+                    )
+                } else if page.untrusted_text_detected {
+                    format!("--- Página {} [⚠️ Untrusted Hidden Text Detected] ---\n", p)
+                } else if page.kind == PageKind::Empty {
+                    format!("--- Página {} [Página en Blanco] ---\n", p)
+                } else {
+                    format!("--- Página {} ---\n", p)
+                };
+                if chars_count + page_header.len() + page.text.len() > max_chars {
+                    let remaining = max_chars.saturating_sub(chars_count + page_header.len());
+                    out.push_str(&page_header);
+                    out.push_str(&page.text.chars().take(remaining).collect::<String>());
+                    out.push_str("\n\n*(Límite de caracteres alcanzado)*\n");
+                    break;
+                }
+                out.push_str(&page_header);
+                out.push_str(&page.text);
+                out.push_str("\n\n");
+                chars_count += page_header.len() + page.text.len();
+            }
+        }
+        Ok(out)
     }
 
     /// Render a specific document page to a high-resolution PNG image for visual multimodal inspection.
@@ -423,7 +462,10 @@ impl DocuGraphServer {
         name = "document_render_page",
         description = "Render a specific document page to a high-resolution PNG image for visual inspection (diagrams, complex charts, scans) by Multimodal LLMs."
     )]
-    pub async fn document_render_page(&self, params: Parameters<RenderPageParams>) -> String {
+    pub async fn document_render_page(
+        &self,
+        params: Parameters<RenderPageParams>,
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
         let page_num = params.0.page_number;
         let max_width = params.0.max_width.unwrap_or(1024);
@@ -442,22 +484,22 @@ impl DocuGraphServer {
                         data_uri,
                         from_cache: rendered.from_cache,
                     };
-                    serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+                    Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
                 }
-                Err(e) => serde_json::json!({
+                Err(e) => Err(serde_json::json!({
                     "error": format!("Failed to render page {page_num} of document '{doc_id}': {e}"),
                     "document_id": doc_id,
                     "page_number": page_num,
                 })
-                .to_string(),
+                .to_string()),
             }
         } else {
-            serde_json::json!({
+            Err(serde_json::json!({
                 "error": format!("Document '{doc_id}' not found."),
                 "document_id": doc_id,
                 "page_number": page_num,
             })
-            .to_string()
+            .to_string())
         }
     }
 
@@ -641,7 +683,7 @@ impl DocuGraphServer {
     pub async fn document_read_attachment(
         &self,
         params: Parameters<DocumentReadAttachmentParams>,
-    ) -> String {
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
         let name_or_id = &params.0.name_or_id;
         let max_bytes = params.0.max_bytes.unwrap_or(524_288); // 512 KB default limit
@@ -684,26 +726,26 @@ impl DocuGraphServer {
                     truncated,
                 };
 
-                serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+                Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
             } else {
-                serde_json::json!({
+                Err(serde_json::json!({
                     "error": format!("Attachment '{name_or_id}' not found in document '{doc_id}'."),
                     "document_id": doc_id,
                     "filename": name_or_id,
                     "size_bytes": 0,
                     "content": ""
                 })
-                .to_string()
+                .to_string())
             }
         } else {
-            serde_json::json!({
+            Err(serde_json::json!({
                 "error": format!("Document '{doc_id}' not found."),
                 "document_id": doc_id,
                 "filename": name_or_id,
                 "size_bytes": 0,
                 "content": ""
             })
-            .to_string()
+            .to_string())
         }
     }
 }

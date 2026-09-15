@@ -151,7 +151,10 @@ async fn test_mcp_document_render_page_tool() {
         page_number: 1,
         max_width: Some(800),
     };
-    let json_resp = server.document_render_page(Parameters(params)).await;
+    let json_resp = server
+        .document_render_page(Parameters(params))
+        .await
+        .expect("Valid render must succeed");
 
     let parsed: serde_json::Value =
         serde_json::from_str(&json_resp).expect("Valid JSON response from tool");
@@ -172,7 +175,7 @@ async fn test_mcp_document_render_page_tool() {
             .starts_with("data:image/png;base64,iVBORw0KGgo")
     );
 
-    // Test requesting non-existent document
+    // Test requesting non-existent document returns Err
     let invalid_params = RenderPageParams {
         document_id: "non-existent-doc".to_string(),
         page_number: 1,
@@ -180,7 +183,8 @@ async fn test_mcp_document_render_page_tool() {
     };
     let err_json = server
         .document_render_page(Parameters(invalid_params))
-        .await;
+        .await
+        .expect_err("Non-existent doc must return error");
     let err_parsed: serde_json::Value = serde_json::from_str(&err_json).expect("Valid error JSON");
     assert!(err_parsed["error"].as_str().unwrap().contains("not found"));
 }

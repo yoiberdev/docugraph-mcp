@@ -257,6 +257,7 @@ fn resolve_node_page_and_preview(
             if page_lower.contains(&title_lower) {
                 node.page_start = page.page_number;
                 node.page_end = page.page_number;
+                node.id = format!("{}-p{}", slugify_title(&node.title), node.page_start);
                 *last_known_page = page.page_number;
                 break;
             }

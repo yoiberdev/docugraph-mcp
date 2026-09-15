@@ -200,17 +200,11 @@ pub fn resolve_named_destination(
             lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
             _ => None,
         };
-        if let Some(dict) = dests_dict {
-            let p_num = dict
-                .get(dest_name)
-                .ok()
-                .and_then(|v| v.as_array().ok())
-                .and_then(|arr| arr.first().cloned())
-                .and_then(|o| o.as_reference().ok())
-                .and_then(|r| page_map.get(&r).copied());
-            if p_num.is_some() {
-                return p_num;
-            }
+        let page = dests_dict
+            .and_then(|d| d.get(dest_name).ok())
+            .and_then(|val| resolve_dest_target(doc, val, page_map));
+        if page.is_some() {
+            return page;
         }
     }
 
@@ -221,39 +215,125 @@ pub fn resolve_named_destination(
             lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
             _ => None,
         };
-        if let Some(nd) = names_dict {
-            let dests_node = nd.get(b"Dests").ok();
-            let node_dict = match dests_node {
-                Some(lopdf::Object::Dictionary(dict)) => Some(dict),
-                Some(lopdf::Object::Reference(id)) => doc.get_dictionary(*id).ok(),
+        let page = names_dict
+            .and_then(|nd| nd.get(b"Dests").ok())
+            .and_then(|dests_node| {
+                find_named_dest_in_node(doc, dests_node, dest_name, page_map, 0)
+            });
+        if page.is_some() {
+            return page;
+        }
+    }
+
+    None
+}
+
+/// Recursively search a PDF Name Tree node (handling /Names chunks and /Kids) for a named destination.
+fn find_named_dest_in_node(
+    doc: &lopdf::Document,
+    node_obj: &lopdf::Object,
+    dest_name: &[u8],
+    page_map: &HashMap<(u32, u16), u32>,
+    depth: usize,
+) -> Option<u32> {
+    if depth > 12 {
+        return None;
+    }
+    let dict = match node_obj {
+        lopdf::Object::Dictionary(d) => Some(d),
+        lopdf::Object::Reference(r) => doc.get_dictionary(*r).ok(),
+        _ => None,
+    }?;
+
+    // Check leaf node: /Names [ key0 val0 key1 val1 ... ]
+    if let Ok(names_obj) = dict.get(b"Names") {
+        let arr = match names_obj {
+            lopdf::Object::Array(a) => Some(a.as_slice()),
+            lopdf::Object::Reference(r) => match doc.get_object(*r) {
+                Ok(lopdf::Object::Array(a)) => Some(a.as_slice()),
                 _ => None,
-            };
-            if let Some(arr) = node_dict
-                .and_then(|d| d.get(b"Names").ok())
-                .and_then(|o| o.as_array().ok())
-            {
-                for chunk in arr.chunks(2) {
-                    if chunk.len() < 2 {
-                        continue;
-                    }
-                    let matches_key = chunk[0].as_str().map(|k| k == dest_name).unwrap_or(false);
-                    if matches_key {
-                        let p_num = chunk[1]
-                            .as_array()
-                            .ok()
-                            .and_then(|arr| arr.first().cloned())
-                            .and_then(|o| o.as_reference().ok())
-                            .and_then(|r| page_map.get(&r).copied());
-                        if p_num.is_some() {
-                            return p_num;
-                        }
+            },
+            _ => None,
+        };
+
+        if let Some(arr) = arr {
+            for chunk in arr.chunks(2) {
+                if chunk.len() < 2 {
+                    continue;
+                }
+                let key_matches = match &chunk[0] {
+                    lopdf::Object::String(bytes, _) => bytes.as_slice() == dest_name,
+                    lopdf::Object::Name(bytes) => bytes.as_slice() == dest_name,
+                    _ => false,
+                };
+                if key_matches {
+                    let page = resolve_dest_target(doc, &chunk[1], page_map);
+                    if page.is_some() {
+                        return page;
                     }
                 }
             }
         }
     }
 
+    // Check intermediate node: /Kids [ ref0 ref1 ... ]
+    if let Ok(kids_obj) = dict.get(b"Kids") {
+        let kids_arr = match kids_obj {
+            lopdf::Object::Array(a) => Some(a.as_slice()),
+            lopdf::Object::Reference(r) => match doc.get_object(*r) {
+                Ok(lopdf::Object::Array(a)) => Some(a.as_slice()),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        if let Some(kids) = kids_arr {
+            for kid in kids {
+                let kid_obj = match kid {
+                    lopdf::Object::Reference(r) => doc.get_object(*r).ok(),
+                    _ => Some(kid),
+                };
+                let found = kid_obj.and_then(|k_obj| {
+                    find_named_dest_in_node(doc, k_obj, dest_name, page_map, depth + 1)
+                });
+                if found.is_some() {
+                    return found;
+                }
+            }
+        }
+    }
+
     None
+}
+
+/// Helper to resolve target destination value (Array, Reference, or Dictionary with /D).
+fn resolve_dest_target(
+    doc: &lopdf::Document,
+    target: &lopdf::Object,
+    page_map: &HashMap<(u32, u16), u32>,
+) -> Option<u32> {
+    match target {
+        lopdf::Object::Array(arr) => arr.first().and_then(|first| match first {
+            lopdf::Object::Reference(r) => page_map.get(r).copied(),
+            lopdf::Object::Integer(idx) => Some((*idx as u32) + 1),
+            _ => None,
+        }),
+        lopdf::Object::Reference(r) => {
+            if let Ok(obj) = doc.get_object(*r) {
+                resolve_dest_target(doc, obj, page_map)
+            } else {
+                None
+            }
+        }
+        lopdf::Object::Dictionary(d) => {
+            if let Ok(d_obj) = d.get(b"D") {
+                resolve_dest_target(doc, d_obj, page_map)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Helper to extract string values from `lopdf::Object`, supporting UTF-16BE decoding.

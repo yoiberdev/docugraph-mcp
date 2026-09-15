@@ -122,6 +122,8 @@ impl DocumentStore {
             }
         }
 
-        map.into_values().collect()
+        let mut list: Vec<DocumentMetadata> = map.into_values().collect();
+        list.sort_by(|a, b| a.id.cmp(&b.id));
+        list
     }
 }

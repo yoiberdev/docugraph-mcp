@@ -125,7 +125,8 @@ async fn test_mcp_document_get_section() {
             include_parent: Some(true),
             max_tokens: Some(500),
         }))
-        .await;
+        .await
+        .expect("get_section must succeed for existing section");
 
     assert!(content.contains("1.1 Ramas Locales"));
     assert!(content.contains("Sección Padre"));
@@ -158,7 +159,8 @@ async fn test_mcp_document_read_pages() {
             page_end: 3,
             max_chars: Some(1000),
         }))
-        .await;
+        .await
+        .expect("read_pages must succeed for valid range");
 
     assert!(pages_md.contains("Página 2"));
     assert!(pages_md.contains("Página 3"));

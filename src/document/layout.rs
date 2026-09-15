@@ -135,6 +135,24 @@ fn decode_bytes_with_encoding(bytes: &[u8], encoding: Option<&Encoding>) -> Stri
     }
 }
 
+/// Heuristic font metrics estimator for Latin proportional typography in digital PDFs.
+pub fn estimate_fragment_width(text: &str, font_size: f32) -> f32 {
+    let mut w = 0.0;
+    for c in text.chars() {
+        let factor = match c {
+            ' ' => 0.25,
+            '.' | ',' | ':' | ';' | '!' | '?' | '\'' | '\"' | '|' => 0.22,
+            'i' | 'l' | 'j' | 't' | 'I' | 'f' => 0.28,
+            'r' | 's' => 0.38,
+            'm' | 'w' | 'M' | 'W' => 0.72,
+            _ if c.is_ascii_uppercase() => 0.60,
+            _ => 0.48,
+        };
+        w += factor * font_size;
+    }
+    w.max(2.0)
+}
+
 /// Extract positioned text fragments from a decoded PDF content stream.
 pub fn extract_positioned_fragments(
     content: &Content,
@@ -198,8 +216,8 @@ pub fn extract_positioned_fragments(
                 }
             }
             "TL" => {
-                if let Some(l) = op.operands.first().and_then(|o| o.as_float().ok()) {
-                    leading = l;
+                if let Some(lead) = op.operands.first().and_then(|o| o.as_float().ok()) {
+                    leading = lead;
                 }
             }
             "Tm" => {
@@ -281,7 +299,7 @@ pub fn extract_positioned_fragments(
                     if !text.trim().is_empty() {
                         let eff = text_matrix.multiply(&ctm);
                         let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (text.chars().count() as f32) * font_size * 0.52;
+                        let w = estimate_fragment_width(&text, font_size);
                         fragments.push(TextFragment {
                             bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
                             text,
@@ -307,7 +325,7 @@ pub fn extract_positioned_fragments(
                     if !text.trim().is_empty() {
                         let eff = text_matrix.multiply(&ctm);
                         let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (text.chars().count() as f32) * font_size * 0.52;
+                        let w = estimate_fragment_width(&text, font_size);
                         fragments.push(TextFragment {
                             bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
                             text,
@@ -322,7 +340,7 @@ pub fn extract_positioned_fragments(
                     if !text.trim().is_empty() {
                         let eff = text_matrix.multiply(&ctm);
                         let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (text.chars().count() as f32) * font_size * 0.52;
+                        let w = estimate_fragment_width(&text, font_size);
                         fragments.push(TextFragment {
                             bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
                             text: text.clone(),
@@ -351,12 +369,12 @@ pub fn extract_positioned_fragments(
                                 let part = decode_bytes_with_encoding(bytes, enc);
                                 combined_text.push_str(&part);
                             }
-                            Object::Integer(i) if *i < -100 => {
+                            Object::Integer(i) if *i < -50 => {
                                 if !combined_text.ends_with(' ') {
                                     combined_text.push(' ');
                                 }
                             }
-                            Object::Real(r) if *r < -100.0 => {
+                            Object::Real(r) if *r < -50.0 => {
                                 if !combined_text.ends_with(' ') {
                                     combined_text.push(' ');
                                 }
@@ -369,7 +387,7 @@ pub fn extract_positioned_fragments(
                     if !clean.is_empty() {
                         let eff = text_matrix.multiply(&ctm);
                         let (x, y) = eff.transform_point(0.0, 0.0);
-                        let w = (clean.chars().count() as f32) * font_size * 0.52;
+                        let w = estimate_fragment_width(clean, font_size);
                         fragments.push(TextFragment {
                             bbox: BoundingBox::new(x, y, w.max(5.0), font_size.max(5.0)),
                             text: clean.to_string(),
@@ -456,7 +474,7 @@ impl ReadingOrderStrategy for MultiColumnSpatialFlow {
         let mut col_cand_y_min = f32::INFINITY;
 
         for f in fragments {
-            let is_spanning = f.bbox.width > (content_width * 0.65);
+            let is_spanning = f.bbox.width > (content_width * 0.55);
             if !is_spanning {
                 col_cand_y_max = col_cand_y_max.max(f.bbox.y_max());
                 col_cand_y_min = col_cand_y_min.min(f.bbox.y_min());
@@ -464,7 +482,7 @@ impl ReadingOrderStrategy for MultiColumnSpatialFlow {
         }
 
         for f in fragments {
-            let is_spanning = f.bbox.width > (content_width * 0.65);
+            let is_spanning = f.bbox.width > (content_width * 0.55);
             if is_spanning {
                 // In PDF coordinates, top of page has highest Y
                 if f.bbox.y >= col_cand_y_max - 5.0 {
@@ -598,8 +616,13 @@ pub fn group_fragments_into_lines(fragments: &[TextFragment]) -> Vec<TextLine> {
                 union_box = union_box.union(&frag.bbox);
                 if idx > 0 {
                     let prev_max = line_frags[idx - 1].bbox.x_max();
+                    let min_gap = (frag.bbox.height * 0.20).max(2.4);
                     // If there is visible horizontal spacing between fragments, insert space
-                    if frag.bbox.x - prev_max >= 2.0 && !line_text.ends_with(' ') {
+                    if frag.bbox.x - prev_max >= min_gap
+                        && !line_text.ends_with(' ')
+                        && !frag.text.starts_with(' ')
+                        && !line_text.ends_with('-')
+                    {
                         line_text.push(' ');
                     }
                 }
@@ -651,7 +674,7 @@ pub fn select_reading_order_strategy(fragments: &[TextFragment]) -> Box<dyn Read
     // Filter out wide spanning elements (titles, horizontal rules, page headers)
     let column_candidates: Vec<&TextFragment> = fragments
         .iter()
-        .filter(|f| f.bbox.width <= content_width * 0.65)
+        .filter(|f| f.bbox.width <= content_width * 0.55)
         .collect();
 
     if column_candidates.len() < 4 {

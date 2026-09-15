@@ -374,7 +374,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
             max_bytes: None,
             encoding: None,
         }))
-        .await;
+        .await
+        .expect("read XML attachment succeeds");
 
     let read_xml_res: DocumentReadAttachmentResult =
         serde_json::from_str(&read_xml_json).expect("parse read XML JSON");
@@ -391,7 +392,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
             max_bytes: None,
             encoding: None,
         }))
-        .await;
+        .await
+        .expect("read binary attachment succeeds");
 
     let read_bin_res: DocumentReadAttachmentResult =
         serde_json::from_str(&read_bin_json).expect("parse read binary JSON");
@@ -407,7 +409,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
             max_bytes: Some(10),
             encoding: None,
         }))
-        .await;
+        .await
+        .expect("read truncated attachment succeeds");
 
     let read_trunc_res: DocumentReadAttachmentResult =
         serde_json::from_str(&read_trunc_json).expect("parse read truncated JSON");
