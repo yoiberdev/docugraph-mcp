@@ -42,18 +42,27 @@ flowchart TD
     subgraph Retrieval & Context Engine
         DocStore --> BM25Idx[Okapi BM25 Index]
         DocStore --> EmbeddingModel[Subword Vector Embeddings]
-        BM25Idx --> HybridEngine[Hybrid Score Fusion Engine]
+        BM25Idx --> Admission[IDF Coverage Admission - decides 'no evidence']
+        Admission --> HybridEngine[Hybrid Score Fusion - ranking only]
         EmbeddingModel --> HybridEngine
-        HybridEngine --> ContextBudget[Token Budgeting & Provenance Tracking]
+        HybridEngine --> ContextBudget[ContextBuilder - Token Budgeting & Provenance]
     end
-    
-    subgraph Domain Knowledge Adapters
-        DocStore --> DesignPatterns[Design Patterns Dynamic Adapter]
+
+    subgraph PDF Feature Extractors
+        NormDoc --> Links[Links & Outlines]
+        NormDoc --> Forms[AcroForms & Tagged Structure]
+        NormDoc --> Attach[Embedded Attachments]
+        NormDoc --> Render[Page Rasterizer - PNG]
     end
-    
+
     ContextBudget --> MCPServer[DocuGraph MCP Server - stdio]
-    EvidenceEngine[Provenance & Evidence Builder] --> MCPServer
+    Links --> MCPServer
+    Forms --> MCPServer
+    Attach --> MCPServer
+    Render --> MCPServer
     MCPServer --> Clients[Antigravity IDE / Claude Code / Trae / Kiro / Codex]
+
+    DocStore -.-> DesignPatterns[Design Patterns Adapter - librería, no expuesto como tool MCP]
 ```
 
 ---
@@ -114,6 +123,24 @@ DocuGraph expone una suite de herramientas diseñada para el descubrimiento prog
 | `document_get_context` | `query`, `document_id`, `max_tokens`, `max_chunks` | Expande el contexto circundante (sección padre, hermanos y sub-cláusulas) para un concepto dentro de un presupuesto estricto. |
 | `document_get_evidence` | `query`, `document_id`, `max_tokens`, `max_items` | Fragmentos compactos de evidencia con citas estrictas `[Doc: ... p. ... § ...]` para razonamiento factual. |
 | `document_read_pages` | `document_id`, `page_start`, `page_end`, `max_chars` | Lectura directa de rango de páginas con presupuesto de caracteres. |
+| `document_render_page` | `document_id`, `page_number`, `max_width` | Rasteriza una página a PNG (base64) para modelos con visión. Ver la nota de fidelidad más abajo. |
+| `document_get_links` | `document_id`, `page`, `kind` | Grafo de hipervínculos: URIs externas y destinos internos con su página de llegada. |
+| `document_get_forms` | `document_id`, `page`, `filled_only` | Campos de formularios AcroForm con nombre cualificado, tipo, valor y posición. |
+| `document_get_attachments` | `document_id` | Lista los ficheros embebidos (`/EmbeddedFiles`, `/AF`, `/FileAttachment`). |
+| `document_read_attachment` | `document_id`, `name_or_id`, `max_bytes`, `encoding` | Lee el contenido de un fichero embebido como texto o base64. |
+
+> **Sobre `document_render_page`:** el rasterizador es propio y sin dependencias nativas. Dibuja bloques
+> por fragmento de texto y no interpreta operadores de trazado, así que sirve para juzgar la *maqueta* de
+> una página (columnas, tablas, densidad), no para leer sus glifos ni sus diagramas vectoriales.
+
+### Cuando no hay evidencia
+
+`document_get_evidence` y `document_get_context` pueden responder que **no** encontraron nada. Un pasaje
+cuenta como evidencia cuando contiene al menos la información media de un término de la consulta, medida
+en IDF sobre el propio corpus; si ninguno llega, la herramienta devuelve `### Sin evidencia para: '...'`
+junto con los términos de la consulta que no aparecen en el documento. Es una respuesta válida, no un
+error: preferimos que el agente sepa que el corpus no cubre la pregunta a que reciba citas de secciones
+que no vienen a cuento.
 
 ---
 
