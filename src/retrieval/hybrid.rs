@@ -68,8 +68,9 @@ impl NoEvidence {
             ));
         }
         out.push_str(
-            "\nSiguiente paso: usa `document_outline` para ver qué cubre el documento, \
-             o reformula la consulta con los términos que sí aparecen en él.\n",
+            "\nSiguiente paso: usa `document_outline` para ver qué cubre el documento y en qué \
+             idioma está escrito, y reformula la consulta con los términos que sí aparecen en él. \
+             Consultar en un idioma distinto al del documento es motivo habitual de este aviso.\n",
         );
         out
     }

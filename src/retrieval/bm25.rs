@@ -73,25 +73,41 @@ impl QueryProfile {
     /// contain raises the bar rather than lowering it. Being a ratio, it is also
     /// invariant to corpus size and to how verbose the query is.
     ///
-    /// Measured on a 437-page manual (488 units), against the 83-to-228 units the
-    /// previous fused-score threshold admitted for the same questions:
+    /// Measured on a 437-page Spanish manual (488 units), against the 83-to-228
+    /// units the previous fused-score threshold admitted for the same questions.
+    /// Queries are quoted verbatim, because the verdict depends on the exact
+    /// wording:
     ///
-    /// | query                         | covered | admitted |
-    /// |-------------------------------|---------|----------|
-    /// | paella recipe                 | no      | 0        |
-    /// | memoization in Rust           | no      | 0        |
-    /// | git merge conflicts           | no      | 0        |
-    /// | ibuprofen dosage              | no      | 0        |
-    /// | "cómo configurar ingress …"   | no      | 5        |
-    /// | Strategy intent               | yes     | 31       |
-    /// | Open/Closed principle         | yes     | 41       |
+    /// | query                                        | covered | admitted |
+    /// |----------------------------------------------|---------|----------|
+    /// | "receta de paella valenciana …"              | no      | 0        |
+    /// | "cómo implementar memoization en Rust …"     | no      | 0        |
+    /// | "how to resolve merge conflicts …"           | no      | 0        |
+    /// | "cuál es la dosis … de ibuprofeno …"         | no      | 0        |
+    /// | "cómo configurar ingress de kubernetes …"    | no      | 5        |
+    /// | "intención del patrón Strategy"              | yes     | 31       |
+    /// | "principio abierto cerrado OCP"              | yes     | 41       |
+    /// | "Observer pattern subscribers"               | yes     | 0        |
     ///
-    /// The known residual is the "cómo configurar X" shape: when every
-    /// informative term is absent, the generic verbs that remain can just clear
-    /// the mean (5.796 vs 5.291 for that query). Using the maximum term IDF as the
-    /// bar instead closes it, but then refuses "principio abierto cerrado OCP",
-    /// which the corpus does cover and which `evaluation/questions.json` asks as
-    /// eval-07. Refusing a real question is the worse failure, so the mean stands.
+    /// Two residuals, in opposite directions.
+    ///
+    /// Admitting too much: the "cómo configurar X" shape. When every informative
+    /// term is absent, the generic verbs left over can just clear the mean (5.796
+    /// against a bar of 5.291).
+    ///
+    /// Admitting too little: a query whose informative terms are in a language the
+    /// corpus is not written in. "Observer pattern subscribers" is refused even
+    /// though `observer` appears in 25 units, because `pattern` and `subscribers`
+    /// are absent, take the maximum IDF and lift the bar to 5.575 - past what
+    /// `observer` alone (2.95) can supply. Agents that reason in English over a
+    /// Spanish corpus will hit this; `document_outline` shows them the vocabulary
+    /// the corpus actually uses.
+    ///
+    /// Both alternatives measured over 13 queries make it worse, not better:
+    /// averaging only the present terms drops the two cross-language misses but
+    /// admits 85 units for the memoization query and 9 for the ibuprofen one (4
+    /// wrong verdicts); taking the maximum present IDF behaves the same (4). The
+    /// mean over all terms is wrong 3 times, and is what ships.
     pub fn admission_floor(&self) -> f32 {
         if self.terms.is_empty() {
             return f32::INFINITY;
