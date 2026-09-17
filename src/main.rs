@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use docugraph::retrieval::HybridRetriever;
 use docugraph::storage::{DiskCache, DocumentStore};
 use rmcp::ServiceExt;
-use tracing::{Level, info};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -123,9 +123,13 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // CRITICAL: Log strictly to stderr so stdio stdout remains 100% clean for JSON-RPC MCP frames
+    // CRITICAL: Log strictly to stderr so stdio stdout remains 100% clean for JSON-RPC MCP frames.
+    // The level comes from RUST_LOG, which README's client configs and .env.example
+    // both set; it was previously pinned to INFO, so setting it did nothing.
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .with_writer(std::io::stderr)
         .finish();
     tracing::subscriber::set_global_default(subscriber)
