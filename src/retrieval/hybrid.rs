@@ -39,6 +39,10 @@ pub struct HybridSearchHit {
     pub page_end: u32,
     pub section_id: Option<String>,
     pub snippet: String,
+    /// The page this snippet's text is actually on, which is what a citation must
+    /// name. `page_start` is where the unit begins, and for a multi-page section
+    /// those are rarely the same page.
+    pub snippet_page: u32,
     pub final_score: f32,
     pub bm25_score: f32,
     pub semantic_score: f32,
@@ -244,10 +248,11 @@ impl HybridRetriever {
             // a cut on the fused score cannot tell relevance from noise. Measured
             // on a 437-page manual, an uncovered query scored 0.565 at the top
             // while a covered one scored 0.557 — no line separates them.
-            let snippet = if let Some((_, hit)) = bm25_map.get(unit.id.as_str()) {
-                hit.snippet.clone()
-            } else {
-                unit.text.chars().take(200).collect()
+            let (snippet, snippet_page) = match bm25_map.get(unit.id.as_str()) {
+                Some((_, hit)) => (hit.snippet.clone(), hit.snippet_page),
+                // No BM25 candidate entry, so the snippet is the unit's opening:
+                // that text is on the unit's first page by construction.
+                None => (unit.text.chars().take(200).collect(), unit.page_start),
             };
 
             scored_hits.push(HybridSearchHit {
@@ -258,6 +263,7 @@ impl HybridRetriever {
                 page_end: unit.page_end,
                 section_id: unit.section_id.clone(),
                 snippet,
+                snippet_page,
                 final_score,
                 bm25_score: bm25_raw,
                 semantic_score,

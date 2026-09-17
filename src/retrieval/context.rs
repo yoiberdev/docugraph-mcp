@@ -112,13 +112,16 @@ impl ContextBuilder {
             }
 
             let citation = match &hit.section_id {
-                Some(sec) => format!("[Doc: {} p. {} § {}]", hit.document_id, hit.page_start, sec),
-                None => format!("[Doc: {} p. {}]", hit.document_id, hit.page_start),
+                Some(sec) => format!(
+                    "[Doc: {} p. {} § {}]",
+                    hit.document_id, hit.snippet_page, sec
+                ),
+                None => format!("[Doc: {} p. {}]", hit.document_id, hit.snippet_page),
             };
 
             items.push(EvidenceItem {
                 document_id: hit.document_id.clone(),
-                page: hit.page_start,
+                page: hit.snippet_page,
                 section_title: hit.title.clone(),
                 section_id: hit.section_id.clone(),
                 citation,
@@ -263,7 +266,7 @@ impl ContextBuilder {
                 };
                 let snippet_text = format!(
                     "**[Doc: {} p. {}]** {}\n\n",
-                    hit.document_id, hit.page_start, snippet_clean
+                    hit.document_id, hit.snippet_page, snippet_clean
                 );
                 let snippet_tokens = estimate_tokens(&snippet_text);
                 out.push_str(&snippet_text);

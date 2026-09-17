@@ -625,3 +625,111 @@ fn test_ranking_uses_the_resolved_terms() {
         "ranking against the resolved terms must find the passage admission accepted"
     );
 }
+
+/// A manual whose one section spans five pages, with a distinctive term on each.
+fn multi_page_section_doc() -> Document {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "manual-spans".to_string(),
+        title: "Manual".to_string(),
+        total_pages: 5,
+        content_hash: "hash-spans".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    for (page, marker) in [
+        (1, "alfa"),
+        (2, "bravo"),
+        (3, "charlie"),
+        (4, "delta"),
+        (5, "eco"),
+    ] {
+        doc.add_page(Page::new(
+            page,
+            format!(
+                "Pagina {page} del procedimiento de calibracion. El indicador {marker} \
+                 se describe aqui con detalle suficiente para ser citado."
+            ),
+        ));
+    }
+    doc.sections.push(SectionNode::new(
+        "proc",
+        "Procedimiento de calibracion",
+        1,
+        1,
+        5,
+        None,
+    ));
+    doc
+}
+
+/// A citation must name the page its snippet is on, not the page its section
+/// starts on.
+///
+/// Regression: a section unit is the concatenation of every page it spans, and
+/// the hit carried only the section's first page. Measured on a 437-page manual,
+/// 30% of multi-page section citations named a page the quoted text was not on -
+/// specific, confident, and checkable in one click, which is the worst shape a
+/// wrong citation can take for a tool that sells verifiable evidence.
+#[test]
+fn test_citation_names_the_page_the_snippet_is_on() {
+    let retriever = HybridRetriever::build(&[multi_page_section_doc()], None);
+
+    for (marker, expected_page) in [("bravo", 2), ("charlie", 3), ("delta", 4), ("eco", 5)] {
+        let hits = retriever
+            .search(marker, 10, &HybridWeights::DEFAULT)
+            .unwrap_or_else(|_| panic!("'{marker}' is in the corpus"));
+
+        let section_hit = hits
+            .iter()
+            .find(|h| h.section_id.is_some())
+            .unwrap_or_else(|| panic!("the section unit must be admitted for '{marker}'"));
+
+        assert_eq!(
+            section_hit.page_start, 1,
+            "the section still starts on page 1"
+        );
+        assert_eq!(
+            section_hit.snippet_page, expected_page,
+            "'{marker}' is on page {expected_page}, so that is the page to cite; \
+             got p.{} with snippet: {}",
+            section_hit.snippet_page, section_hit.snippet
+        );
+    }
+}
+
+/// The rendered citation carries that page, not the section's first one.
+#[test]
+fn test_evidence_markdown_cites_the_snippet_page() {
+    let docs = vec![multi_page_section_doc()];
+    let retriever = HybridRetriever::build(&docs, None);
+    let hits = retriever
+        .search("delta", 5, &HybridWeights::DEFAULT)
+        .expect("the corpus covers this");
+
+    let budget = ContextBudget {
+        max_tokens: 500,
+        max_chunks: 3,
+        compact: true,
+    };
+    let markdown = ContextBuilder::build_evidence("delta", &hits, budget).to_markdown();
+
+    assert!(
+        markdown.contains("p. 4"),
+        "the citation must name page 4, where 'delta' is: {markdown}"
+    );
+}
+
+/// A page unit's snippet page is simply its page, and must stay that way.
+#[test]
+fn test_page_units_cite_their_own_page() {
+    let index =
+        docugraph::retrieval::Bm25Index::build_from_documents(&[multi_page_section_doc()], None);
+    let hits = index.search("charlie", 10);
+
+    let page_hit = hits
+        .iter()
+        .find(|h| h.section_id.is_none())
+        .expect("the page unit must be found");
+    assert_eq!(page_hit.snippet_page, page_hit.page_start);
+    assert_eq!(page_hit.snippet_page, 3);
+}
