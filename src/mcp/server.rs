@@ -3,7 +3,7 @@
 use rmcp::{
     ServerHandler, ServiceExt,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{ServerCapabilities, ServerInfo},
+    model::{ServerCapabilities, ServerConfig},
     tool, tool_handler, tool_router,
 };
 use tracing::info;
@@ -24,8 +24,8 @@ pub struct DocuGraphServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for DocuGraphServer {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.server_info.name = "docugraph-mcp".to_string();
         info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
         info.instructions = Some(
