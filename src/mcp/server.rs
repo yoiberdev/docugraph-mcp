@@ -95,16 +95,54 @@ impl DocuGraphServer {
         Ok(())
     }
 
-    /// Helper to fetch a target document or all loaded documents.
-    fn get_documents(&self, doc_id: Option<&str>) -> Vec<Document> {
-        if let Some(doc) = doc_id.and_then(|id| self.store.get(id)) {
-            return vec![doc];
+    /// Resolve the search scope: the named document, or every indexed document
+    /// when no id is given.
+    ///
+    /// An explicit id that does not resolve is an error, never a silent widening to
+    /// the whole corpus: a typo must not return cited passages from another document.
+    fn resolve_scope(&self, doc_id: Option<&str>) -> Result<Vec<Document>, String> {
+        match doc_id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => self
+                .store
+                .get(id)
+                .map(|doc| vec![doc])
+                .ok_or_else(|| self.unknown_document_error(id)),
+            None => {
+                let docs: Vec<Document> = self
+                    .store
+                    .list_documents()
+                    .into_iter()
+                    .filter_map(|m| self.store.get(&m.id))
+                    .collect();
+                if docs.is_empty() {
+                    Err(Self::EMPTY_CORPUS.to_string())
+                } else {
+                    Ok(docs)
+                }
+            }
         }
-        let metas = self.store.list_documents();
-        metas
+    }
+
+    const EMPTY_CORPUS: &'static str =
+        "No documents indexed. Run `docugraph index <path.pdf>` first.";
+
+    /// Name the ids the agent can actually use, so an unknown id is correctable
+    /// in one follow-up call instead of being guessed at.
+    fn unknown_document_error(&self, id: &str) -> String {
+        let available: Vec<String> = self
+            .store
+            .list_documents()
             .into_iter()
-            .filter_map(|m| self.store.get(&m.id))
-            .collect()
+            .take(10)
+            .map(|m| m.id)
+            .collect();
+        if available.is_empty() {
+            return format!("Document '{id}' not found. {}", Self::EMPTY_CORPUS);
+        }
+        format!(
+            "Document '{id}' not found. Available: {}. Use 'document_list' for the full list.",
+            available.join(", ")
+        )
     }
 }
 
@@ -249,16 +287,16 @@ impl DocuGraphServer {
         name = "document_search",
         description = "Fast BM25 keyword search across sections and pages. Returns ranked snippets with citations."
     )]
-    pub async fn document_search(&self, params: Parameters<DocumentSearchParams>) -> String {
+    pub async fn document_search(
+        &self,
+        params: Parameters<DocumentSearchParams>,
+    ) -> Result<String, String> {
         let limit = params.0.limit.unwrap_or(5);
-        let docs = self.get_documents(params.0.document_id.as_deref());
-        if docs.is_empty() {
-            return "No documents available for search.".to_string();
-        }
+        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
 
         let bm25 = crate::retrieval::Bm25Index::build_from_documents(&docs, None);
         let hits = bm25.search(&params.0.query, limit);
-        serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string())
+        Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
     }
 
     /// Perform hybrid search (BM25 + Semantic Cosine + Structural Boost) with configurable weights.
@@ -269,12 +307,9 @@ impl DocuGraphServer {
     pub async fn document_search_hybrid(
         &self,
         params: Parameters<DocumentSearchHybridParams>,
-    ) -> String {
+    ) -> Result<String, String> {
         let limit = params.0.limit.unwrap_or(5);
-        let docs = self.get_documents(params.0.document_id.as_deref());
-        if docs.is_empty() {
-            return "No documents available for search.".to_string();
-        }
+        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
 
         let weights = HybridWeights {
             bm25_weight: params.0.bm25_weight.unwrap_or(0.50),
@@ -284,7 +319,7 @@ impl DocuGraphServer {
 
         let retriever = HybridRetriever::build(&docs, None, Some(weights));
         let hits = retriever.search(&params.0.query, limit);
-        serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string())
+        Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
     }
 
     /// Retrieve the full content of a specific section with optional parent context and token budgeting.
@@ -325,12 +360,9 @@ impl DocuGraphServer {
     pub async fn document_get_context(
         &self,
         params: Parameters<DocumentGetContextParams>,
-    ) -> String {
+    ) -> Result<String, String> {
         let query = &params.0.query;
-        let docs = self.get_documents(params.0.document_id.as_deref());
-        if docs.is_empty() {
-            return "No documents available for context expansion.".to_string();
-        }
+        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
 
         let budget = ContextBudget {
             max_tokens: params.0.max_tokens.unwrap_or(1500),
@@ -340,7 +372,9 @@ impl DocuGraphServer {
 
         let retriever = HybridRetriever::build(&docs, None, None);
         let hits = retriever.search(query, budget.max_chunks * 2);
-        ContextBuilder::build_conceptual_context(query, &hits, &docs, budget)
+        Ok(ContextBuilder::build_conceptual_context(
+            query, &hits, &docs, budget,
+        ))
     }
 
     /// Retrieve compact evidence snippets with guaranteed citation provenance for LLM reasoning.
@@ -351,12 +385,9 @@ impl DocuGraphServer {
     pub async fn document_get_evidence(
         &self,
         params: Parameters<DocumentGetEvidenceParams>,
-    ) -> String {
+    ) -> Result<String, String> {
         let query = &params.0.query;
-        let docs = self.get_documents(params.0.document_id.as_deref());
-        if docs.is_empty() {
-            return "No documents available for evidence collection.".to_string();
-        }
+        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
 
         let budget = ContextBudget {
             max_tokens: params.0.max_tokens.unwrap_or(1200),
@@ -367,7 +398,7 @@ impl DocuGraphServer {
         let retriever = HybridRetriever::build(&docs, None, None);
         let hits = retriever.search(query, budget.max_chunks * 2);
         let bundle = ContextBuilder::build_evidence(query, &hits, budget);
-        bundle.to_markdown()
+        Ok(bundle.to_markdown())
     }
 
     /// Read raw text from a specific page range with a character budget.

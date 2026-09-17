@@ -87,7 +87,8 @@ async fn test_mcp_document_search_bm25() {
             document_id: Some("git-guide".to_string()),
             limit: Some(3),
         }))
-        .await;
+        .await
+        .expect("search must succeed for an indexed document_id");
 
     let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hits");
     assert!(hits.is_array());
@@ -107,7 +108,8 @@ async fn test_mcp_document_search_hybrid() {
             semantic_weight: Some(0.2),
             structural_weight: Some(0.2),
         }))
-        .await;
+        .await
+        .expect("hybrid search must succeed over the whole corpus");
 
     let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hybrid hits");
     assert!(hits.is_array());
@@ -143,7 +145,8 @@ async fn test_mcp_document_get_evidence() {
             max_tokens: Some(500),
             max_items: Some(2),
         }))
-        .await;
+        .await
+        .expect("evidence must succeed over the whole corpus");
 
     assert!(evidence_md.contains("Evidencia Recuperada"));
     assert!(evidence_md.contains("[Doc: git-guide"));
@@ -177,8 +180,103 @@ async fn test_mcp_document_get_context() {
             max_tokens: Some(600),
             max_chunks: Some(2),
         }))
-        .await;
+        .await
+        .expect("context must succeed for an indexed document_id");
 
     assert!(context_md.contains("Contexto Conceptual"));
     assert!(context_md.contains("1.1 Ramas Locales") || context_md.contains("git branch"));
+}
+
+/// An explicit but unresolvable `document_id` must be an error on every scoped tool.
+///
+/// Regression: these tools used to fall back to the whole corpus, so a typo returned
+/// confidently-cited passages from a different document with no signal at all.
+#[tokio::test]
+async fn test_mcp_unknown_document_id_is_an_error_not_a_silent_corpus_wide_search() {
+    let server = create_test_server();
+    let unknown = "libro-inexistente-xyz".to_string();
+
+    let search = server
+        .document_search(Parameters(DocumentSearchParams {
+            query: "ramas locales".to_string(),
+            document_id: Some(unknown.clone()),
+            limit: Some(3),
+        }))
+        .await;
+    let err = search.expect_err("an unknown document_id must not resolve to the whole corpus");
+    assert!(
+        err.contains(&unknown),
+        "the error must name the bad id: {err}"
+    );
+    assert!(
+        err.contains("git-guide"),
+        "the error must list the available ids so the agent can correct itself: {err}"
+    );
+
+    let hybrid = server
+        .document_search_hybrid(Parameters(DocumentSearchHybridParams {
+            query: "ramas locales".to_string(),
+            document_id: Some(unknown.clone()),
+            limit: Some(3),
+            bm25_weight: None,
+            semantic_weight: None,
+            structural_weight: None,
+        }))
+        .await;
+    assert!(hybrid.is_err(), "hybrid search must reject an unknown id");
+
+    let evidence = server
+        .document_get_evidence(Parameters(DocumentGetEvidenceParams {
+            query: "ramas locales".to_string(),
+            document_id: Some(unknown.clone()),
+            max_tokens: Some(500),
+            max_items: Some(2),
+        }))
+        .await;
+    assert!(evidence.is_err(), "evidence must reject an unknown id");
+
+    let context = server
+        .document_get_context(Parameters(DocumentGetContextParams {
+            query: "ramas locales".to_string(),
+            document_id: Some(unknown),
+            max_tokens: Some(600),
+            max_chunks: Some(2),
+        }))
+        .await;
+    assert!(context.is_err(), "context must reject an unknown id");
+}
+
+/// A blank `document_id` is an unambiguous "no filter", not a typo: it must widen
+/// to the whole corpus rather than error.
+#[tokio::test]
+async fn test_mcp_blank_document_id_is_treated_as_no_filter() {
+    let server = create_test_server();
+    let resp = server
+        .document_search(Parameters(DocumentSearchParams {
+            query: "ramas locales".to_string(),
+            document_id: Some("   ".to_string()),
+            limit: Some(3),
+        }))
+        .await
+        .expect("a blank document_id must mean 'search everything'");
+
+    let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hits");
+    assert!(hits.is_array());
+}
+
+/// The store resolves a document by content hash even with no disk cache configured.
+#[tokio::test]
+async fn test_mcp_document_id_accepts_a_content_hash() {
+    let server = create_test_server();
+    let resp = server
+        .document_search(Parameters(DocumentSearchParams {
+            query: "ramas locales".to_string(),
+            document_id: Some("hashgit123".to_string()),
+            limit: Some(3),
+        }))
+        .await
+        .expect("a content hash is a valid document identifier");
+
+    let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hits");
+    assert!(hits.is_array());
 }

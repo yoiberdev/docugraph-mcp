@@ -51,14 +51,25 @@ impl DocumentStore {
         Ok(())
     }
 
-    /// Get a document by its ID, checking memory first, then disk cache.
+    /// Get a document by its ID or content hash, checking memory first, then disk cache.
     pub fn get(&self, id: &str) -> Option<Document> {
-        // 1. Check in-memory
+        // 1. Check in-memory by id
         if let Some(doc) = self.memory.read().ok().and_then(|mem| mem.get(id).cloned()) {
             return Some(doc);
         }
 
-        // 2. Check disk cache
+        // 2. Check in-memory by content hash. The disk branch below already accepts
+        //    either identifier, so without this a hash only resolves when a disk
+        //    cache is configured.
+        if let Some(doc) = self.memory.read().ok().and_then(|mem| {
+            mem.values()
+                .find(|d| d.metadata.content_hash == id)
+                .cloned()
+        }) {
+            return Some(doc);
+        }
+
+        // 3. Check disk cache
         if let Some(ref cache) = self.disk {
             let metadata_list = cache.list_metadata().unwrap_or_default();
             for meta in metadata_list {
