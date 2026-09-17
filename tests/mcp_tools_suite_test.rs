@@ -69,7 +69,8 @@ async fn test_mcp_document_outline() {
             document_id: "git-guide".to_string(),
             max_depth: Some(2),
         }))
-        .await;
+        .await
+        .expect("outline must succeed for an indexed document");
 
     let tree: serde_json::Value = serde_json::from_str(&outline_json).expect("valid JSON tree");
     assert!(tree.is_array());
@@ -279,4 +280,102 @@ async fn test_mcp_document_id_accepts_a_content_hash() {
 
     let hits: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON hits");
     assert!(hits.is_array());
+}
+
+/// Every tool that takes a `document_id` must report an unknown one as a tool
+/// error, so the MCP client sees `isError` rather than a successful response.
+///
+/// Regression: `document_get_links`, `document_get_forms` and
+/// `document_get_attachments` returned `Ok` with an `{"error": ...}` body, and
+/// `document_outline` returned `Ok("Error: Document ... not found.")`. Worst of
+/// all, `document_info` returned a structurally valid result with
+/// `total_pages: 0` and `content_hash: ""`, which reads as an empty document
+/// rather than a missing one.
+#[tokio::test]
+async fn test_mcp_unknown_document_is_an_error_on_every_scoped_tool() {
+    let server = create_test_server();
+    let unknown = "no-such-document".to_string();
+
+    let info = server
+        .document_info(Parameters(DocumentInfoParams {
+            document_id: unknown.clone(),
+        }))
+        .await;
+    let err = info.expect_err("document_info must not fabricate an empty document");
+    assert!(err.contains(&unknown), "got: {err}");
+    assert!(err.contains("git-guide"), "must list available ids: {err}");
+
+    let outline = server
+        .document_outline(Parameters(DocumentOutlineParams {
+            document_id: unknown.clone(),
+            max_depth: None,
+        }))
+        .await;
+    assert!(
+        outline.is_err(),
+        "document_outline must reject an unknown id"
+    );
+
+    let links = server
+        .document_get_links(Parameters(DocumentGetLinksParams {
+            document_id: unknown.clone(),
+            page: None,
+            kind: None,
+        }))
+        .await;
+    assert!(
+        links.is_err(),
+        "document_get_links must reject an unknown id"
+    );
+
+    let forms = server
+        .document_get_forms(Parameters(DocumentGetFormsParams {
+            document_id: unknown.clone(),
+            page: None,
+            filled_only: None,
+        }))
+        .await;
+    assert!(
+        forms.is_err(),
+        "document_get_forms must reject an unknown id"
+    );
+
+    let attachments = server
+        .document_get_attachments(Parameters(DocumentGetAttachmentsParams {
+            document_id: unknown.clone(),
+        }))
+        .await;
+    assert!(
+        attachments.is_err(),
+        "document_get_attachments must reject an unknown id"
+    );
+
+    let section = server
+        .document_get_section(Parameters(DocumentGetSectionParams {
+            document_id: unknown,
+            section_id: "ramas-locales".to_string(),
+            include_parent: None,
+            max_tokens: None,
+        }))
+        .await;
+    assert!(section.is_err());
+}
+
+/// A missing section names where to find the real ones, the same way a missing
+/// document names the available document ids.
+#[tokio::test]
+async fn test_mcp_unknown_section_points_at_the_outline() {
+    let server = create_test_server();
+    let err = server
+        .document_get_section(Parameters(DocumentGetSectionParams {
+            document_id: "git-guide".to_string(),
+            section_id: "no-such-section".to_string(),
+            include_parent: None,
+            max_tokens: None,
+        }))
+        .await
+        .expect_err("an unknown section_id must be an error");
+
+    assert!(err.contains("no-such-section"), "got: {err}");
+    assert!(err.contains("document_outline"), "got: {err}");
 }

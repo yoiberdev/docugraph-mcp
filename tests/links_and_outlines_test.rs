@@ -355,7 +355,8 @@ async fn test_mcp_tool_document_get_links() {
             page: None,
             kind: Some("all".to_string()),
         }))
-        .await;
+        .await
+        .expect("links must succeed for an indexed document");
 
     let res: DocumentGetLinksResult =
         serde_json::from_str(&all_links_json).expect("valid JSON result");
@@ -370,7 +371,8 @@ async fn test_mcp_tool_document_get_links() {
             page: None,
             kind: Some("external".to_string()),
         }))
-        .await;
+        .await
+        .expect("links must succeed for an indexed document");
     let ext_res: DocumentGetLinksResult =
         serde_json::from_str(&ext_json).expect("valid JSON result");
     assert_eq!(ext_res.total_links, 1);
@@ -387,7 +389,8 @@ async fn test_mcp_tool_document_get_links() {
             page: None,
             kind: Some("internal".to_string()),
         }))
-        .await;
+        .await
+        .expect("links must succeed for an indexed document");
     let int_res: DocumentGetLinksResult =
         serde_json::from_str(&int_json).expect("valid JSON result");
     assert_eq!(int_res.total_links, 1);
@@ -401,20 +404,27 @@ async fn test_mcp_tool_document_get_links() {
             page: Some(2),
             kind: None,
         }))
-        .await;
+        .await
+        .expect("links must succeed for an indexed document");
     let p2_res: DocumentGetLinksResult = serde_json::from_str(&p2_json).expect("valid JSON result");
     assert_eq!(p2_res.total_links, 1);
     assert_eq!(p2_res.links[0].page_number, 2);
     assert_eq!(p2_res.links[0].kind, "named");
     assert_eq!(p2_res.links[0].named_target.as_deref(), Some("appendix-b"));
 
-    // 5. Query non-existent document
-    let not_found_json = server
+    // 5. A non-existent document is an error, not a successful response that
+    //    happens to carry an "error" field the client would read as success.
+    let err = server
         .document_get_links(Parameters(DocumentGetLinksParams {
             document_id: "non-existent".to_string(),
             page: None,
             kind: None,
         }))
-        .await;
-    assert!(not_found_json.contains("not found"));
+        .await
+        .expect_err("an unknown document_id must be reported as a tool error");
+    assert!(err.contains("not found"), "got: {err}");
+    assert!(
+        err.contains("links-demo-doc"),
+        "the error must list the available ids: {err}"
+    );
 }

@@ -181,12 +181,14 @@ async fn test_mcp_document_render_page_tool() {
         page_number: 1,
         max_width: None,
     };
-    let err_json = server
+    // The error is prose, not a JSON blob stuffed into the error string: rmcp
+    // already wraps it as an error content block, and nesting a second undeclared
+    // schema inside gives the agent an object to read as a sentence.
+    let err = server
         .document_render_page(Parameters(invalid_params))
         .await
         .expect_err("Non-existent doc must return error");
-    let err_parsed: serde_json::Value = serde_json::from_str(&err_json).expect("Valid error JSON");
-    assert!(err_parsed["error"].as_str().unwrap().contains("not found"));
+    assert!(err.contains("not found"), "got: {err}");
 }
 
 #[test]

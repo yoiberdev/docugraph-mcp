@@ -236,7 +236,8 @@ async fn test_mcp_server_scanned_warnings_in_tools() {
         .document_info(Parameters(DocumentInfoParams {
             document_id: "doc-with-scans".to_string(),
         }))
-        .await;
+        .await
+        .expect("info must succeed for an indexed document");
     let info: DocumentInfoResult =
         serde_json::from_str(&info_json).expect("valid DocumentInfoResult");
     assert_eq!(info.scanned_pages_count, 1);

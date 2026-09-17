@@ -357,7 +357,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
         .document_get_attachments(Parameters(DocumentGetAttachmentsParams {
             document_id: "doc_with_attachments".to_string(),
         }))
-        .await;
+        .await
+        .expect("attachments must succeed for an indexed document");
 
     let list_res: DocumentGetAttachmentsResult =
         serde_json::from_str(&list_json).expect("parse list JSON");
@@ -422,7 +423,8 @@ async fn test_mcp_document_get_attachments_and_read_attachment() {
         .document_info(Parameters(DocumentInfoParams {
             document_id: "doc_with_attachments".to_string(),
         }))
-        .await;
+        .await
+        .expect("info must succeed for an indexed document");
 
     let info_res: DocumentInfoResult = serde_json::from_str(&info_json).expect("parse info JSON");
     assert!(info_res.has_attachments);

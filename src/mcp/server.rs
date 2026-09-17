@@ -102,11 +102,7 @@ impl DocuGraphServer {
     /// the whole corpus: a typo must not return cited passages from another document.
     fn resolve_scope(&self, doc_id: Option<&str>) -> Result<Vec<Document>, String> {
         match doc_id.map(str::trim).filter(|id| !id.is_empty()) {
-            Some(id) => self
-                .store
-                .get(id)
-                .map(|doc| vec![doc])
-                .ok_or_else(|| self.unknown_document_error(id)),
+            Some(id) => self.require_document(id).map(|doc| vec![doc]),
             None => {
                 let docs: Vec<Document> = self
                     .store
@@ -125,6 +121,18 @@ impl DocuGraphServer {
 
     const EMPTY_CORPUS: &'static str =
         "No documents indexed. Run `docugraph index <path.pdf>` first.";
+
+    /// Resolve a `document_id`, or explain once why it did not resolve.
+    ///
+    /// The single place a tool turns an id into a `Document`. The message naming
+    /// the ids an agent can actually use is written once and every tool inherits
+    /// it, instead of nine handlers each saying "not found" and stopping there.
+    fn require_document(&self, doc_id: &str) -> Result<Document, String> {
+        let id = doc_id.trim();
+        self.store
+            .get(id)
+            .ok_or_else(|| self.unknown_document_error(id))
+    }
 
     /// Name the ids the agent can actually use, so an unknown id is correctable
     /// in one follow-up call instead of being guessed at.
@@ -190,75 +198,54 @@ impl DocuGraphServer {
         name = "document_info",
         description = "Get structural metadata, page count, and section overview for an indexed document."
     )]
-    pub async fn document_info(&self, params: Parameters<DocumentInfoParams>) -> String {
-        let doc_id = &params.0.document_id;
-        if let Some(doc) = self.store.get(doc_id) {
-            let preview: Vec<String> = doc
-                .sections
-                .iter()
-                .flat_map(|s| s.flatten())
-                .take(25)
-                .map(|s| {
-                    let indent = "  ".repeat(s.level.saturating_sub(1) as usize);
-                    format!(
-                        "{indent}* {} (pp. {}-{})",
-                        s.title, s.page_start, s.page_end
-                    )
-                })
-                .collect();
+    pub async fn document_info(
+        &self,
+        params: Parameters<DocumentInfoParams>,
+    ) -> Result<String, String> {
+        let doc = self.require_document(&params.0.document_id)?;
 
-            let scan_warning = if doc.metadata.scanned_pages_count > 0 {
-                Some(format!(
-                    "⚠️ {} de {} páginas parecen ser imágenes escaneadas sin capa de texto digital. Se recomienda OCR externo.",
-                    doc.metadata.scanned_pages_count, doc.metadata.total_pages
-                ))
-            } else {
-                None
-            };
-
-            let info = DocumentInfoResult {
-                id: doc.id.to_string(),
-                title: doc.metadata.title.clone(),
-                total_pages: doc.metadata.total_pages,
-                total_sections: doc.total_sections() as u32,
-                content_hash: doc.metadata.content_hash.clone(),
-                sections_preview: preview,
-                is_encrypted: doc.metadata.is_encrypted,
-                untrusted_text_detected: doc.metadata.untrusted_text_detected,
-                scanned_pages_count: doc.metadata.scanned_pages_count,
-                scan_warning,
-                total_links: doc.metadata.total_links,
-                has_forms: doc.metadata.has_forms,
-                total_form_fields: doc.metadata.total_form_fields,
-                is_tagged: doc.metadata.is_tagged,
-                has_attachments: doc.metadata.has_attachments,
-                total_attachments: doc.metadata.total_attachments,
-            };
-            serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string())
-        } else {
-            serde_json::to_string_pretty(&DocumentInfoResult {
-                id: doc_id.clone(),
-                title: format!("Document Not Found: {}", doc_id),
-                total_pages: 0,
-                total_sections: 0,
-                content_hash: String::new(),
-                sections_preview: vec![
-                    "Document not found. Use 'document_list' to view available documents."
-                        .to_string(),
-                ],
-                is_encrypted: false,
-                untrusted_text_detected: false,
-                scanned_pages_count: 0,
-                scan_warning: None,
-                total_links: 0,
-                has_forms: false,
-                total_form_fields: 0,
-                is_tagged: false,
-                has_attachments: false,
-                total_attachments: 0,
+        let preview: Vec<String> = doc
+            .sections
+            .iter()
+            .flat_map(|s| s.flatten())
+            .take(25)
+            .map(|s| {
+                let indent = "  ".repeat(s.level.saturating_sub(1) as usize);
+                format!(
+                    "{indent}* {} (pp. {}-{})",
+                    s.title, s.page_start, s.page_end
+                )
             })
-            .unwrap_or_else(|_| "{}".to_string())
-        }
+            .collect();
+
+        let scan_warning = if doc.metadata.scanned_pages_count > 0 {
+            Some(format!(
+                "⚠️ {} de {} páginas parecen ser imágenes escaneadas sin capa de texto digital. Se recomienda OCR externo.",
+                doc.metadata.scanned_pages_count, doc.metadata.total_pages
+            ))
+        } else {
+            None
+        };
+
+        let info = DocumentInfoResult {
+            id: doc.id.to_string(),
+            title: doc.metadata.title.clone(),
+            total_pages: doc.metadata.total_pages,
+            total_sections: doc.total_sections() as u32,
+            content_hash: doc.metadata.content_hash.clone(),
+            sections_preview: preview,
+            is_encrypted: doc.metadata.is_encrypted,
+            untrusted_text_detected: doc.metadata.untrusted_text_detected,
+            scanned_pages_count: doc.metadata.scanned_pages_count,
+            scan_warning,
+            total_links: doc.metadata.total_links,
+            has_forms: doc.metadata.has_forms,
+            total_form_fields: doc.metadata.total_form_fields,
+            is_tagged: doc.metadata.is_tagged,
+            has_attachments: doc.metadata.has_attachments,
+            total_attachments: doc.metadata.total_attachments,
+        };
+        Ok(serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string()))
     }
 
     /// Retrieve the hierarchical table of contents (outline) of a document with page ranges.
@@ -266,20 +253,19 @@ impl DocuGraphServer {
         name = "document_outline",
         description = "Get the hierarchical outline tree (H1, H2, H3) with exact page ranges and section IDs."
     )]
-    pub async fn document_outline(&self, params: Parameters<DocumentOutlineParams>) -> String {
-        let doc_id = &params.0.document_id;
+    pub async fn document_outline(
+        &self,
+        params: Parameters<DocumentOutlineParams>,
+    ) -> Result<String, String> {
         let max_depth = params.0.max_depth.unwrap_or(3);
+        let doc = self.require_document(&params.0.document_id)?;
 
-        if let Some(doc) = self.store.get(doc_id) {
-            let tree: Vec<OutlineNodeResult> = doc
-                .sections
-                .iter()
-                .filter_map(|s| map_outline_node(s, 1, max_depth))
-                .collect();
-            serde_json::to_string_pretty(&tree).unwrap_or_else(|_| "[]".to_string())
-        } else {
-            format!("Error: Document '{doc_id}' not found.")
-        }
+        let tree: Vec<OutlineNodeResult> = doc
+            .sections
+            .iter()
+            .filter_map(|s| map_outline_node(s, 1, max_depth))
+            .collect();
+        Ok(serde_json::to_string_pretty(&tree).unwrap_or_else(|_| "[]".to_string()))
     }
 
     /// Perform fast Okapi BM25 keyword search over document sections and pages.
@@ -342,15 +328,13 @@ impl DocuGraphServer {
             compact: true,
         };
 
-        if let Some(doc) = self.store.get(doc_id) {
-            match ContextBuilder::expand_section_context(&doc, section_id, include_parent, budget) {
-                Some(content) => Ok(content),
-                None => Err(format!(
-                    "Error: Section '{section_id}' not found in document '{doc_id}'."
-                )),
-            }
-        } else {
-            Err(format!("Error: Document '{doc_id}' not found."))
+        let doc = self.require_document(doc_id)?;
+        match ContextBuilder::expand_section_context(&doc, section_id, include_parent, budget) {
+            Some(content) => Ok(content),
+            None => Err(format!(
+                "Section '{section_id}' not found in document '{doc_id}'. \
+                 Use 'document_outline' to list the section ids of this document."
+            )),
         }
     }
 
@@ -430,8 +414,8 @@ impl DocuGraphServer {
             ));
         }
 
-        let Some(doc) = self.store.get(doc_id) else {
-            return Err(format!("Document '{doc_id}' not found."));
+        let Some(doc) = self.store.get(doc_id.trim()) else {
+            return Err(self.unknown_document_error(doc_id));
         };
 
         if params.0.page_start > doc.metadata.total_pages {
@@ -508,36 +492,28 @@ impl DocuGraphServer {
         let page_num = params.0.page_number;
         let max_width = params.0.max_width.unwrap_or(1024);
 
-        if let Some(doc) = self.store.get(doc_id) {
-            match self.renderer.render_document_page(&doc, page_num, max_width) {
-                Ok(rendered) => {
-                    let data_uri = format!("data:image/png;base64,{}", rendered.base64_data);
-                    let res = RenderPageResult {
-                        document_id: doc_id.clone(),
-                        page_number: rendered.page_number,
-                        width: rendered.width,
-                        height: rendered.height,
-                        mime_type: "image/png".to_string(),
-                        base64_image: rendered.base64_data,
-                        data_uri,
-                        from_cache: rendered.from_cache,
-                    };
-                    Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
-                }
-                Err(e) => Err(serde_json::json!({
-                    "error": format!("Failed to render page {page_num} of document '{doc_id}': {e}"),
-                    "document_id": doc_id,
-                    "page_number": page_num,
-                })
-                .to_string()),
+        let doc = self.require_document(doc_id)?;
+        match self
+            .renderer
+            .render_document_page(&doc, page_num, max_width)
+        {
+            Ok(rendered) => {
+                let data_uri = format!("data:image/png;base64,{}", rendered.base64_data);
+                let res = RenderPageResult {
+                    document_id: doc_id.clone(),
+                    page_number: rendered.page_number,
+                    width: rendered.width,
+                    height: rendered.height,
+                    mime_type: "image/png".to_string(),
+                    base64_image: rendered.base64_data,
+                    data_uri,
+                    from_cache: rendered.from_cache,
+                };
+                Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
             }
-        } else {
-            Err(serde_json::json!({
-                "error": format!("Document '{doc_id}' not found."),
-                "document_id": doc_id,
-                "page_number": page_num,
-            })
-            .to_string())
+            Err(e) => Err(format!(
+                "Failed to render page {page_num} of document '{doc_id}': {e}"
+            )),
         }
     }
 
@@ -546,66 +522,60 @@ impl DocuGraphServer {
         name = "document_get_links",
         description = "Extract hyperlinks and internal cross-references from a document with exact page numbers, URLs, and coordinates."
     )]
-    pub async fn document_get_links(&self, params: Parameters<DocumentGetLinksParams>) -> String {
+    pub async fn document_get_links(
+        &self,
+        params: Parameters<DocumentGetLinksParams>,
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
         let page_filter = params.0.page;
         let kind_filter = params.0.kind.as_deref().unwrap_or("all").to_lowercase();
 
-        if let Some(doc) = self.store.get(doc_id) {
-            let mut results = Vec::new();
+        let doc = self.require_document(doc_id)?;
+        let mut results = Vec::new();
 
-            let target_pages: Vec<&crate::document::Page> = if let Some(p) = page_filter {
-                doc.get_page(p).into_iter().collect()
-            } else {
-                doc.pages.iter().collect()
-            };
+        let target_pages: Vec<&crate::document::Page> = if let Some(p) = page_filter {
+            doc.get_page(p).into_iter().collect()
+        } else {
+            doc.pages.iter().collect()
+        };
 
-            for page in target_pages {
-                for link in &page.links {
-                    let kind_str = match &link.target {
-                        crate::document::LinkTarget::Uri(_) => "external",
-                        crate::document::LinkTarget::InternalPage(_) => "internal",
-                        crate::document::LinkTarget::Named(_) => "named",
-                    };
+        for page in target_pages {
+            for link in &page.links {
+                let kind_str = match &link.target {
+                    crate::document::LinkTarget::Uri(_) => "external",
+                    crate::document::LinkTarget::InternalPage(_) => "internal",
+                    crate::document::LinkTarget::Named(_) => "named",
+                };
 
-                    let matches_kind = match kind_filter.as_str() {
-                        "external" => link.is_external(),
-                        "internal" => link.is_internal(),
-                        _ => true,
-                    };
+                let matches_kind = match kind_filter.as_str() {
+                    "external" => link.is_external(),
+                    "internal" => link.is_internal(),
+                    _ => true,
+                };
 
-                    if matches_kind {
-                        results.push(DocumentLinkResult {
-                            page_number: link.page_number,
-                            kind: kind_str.to_string(),
-                            uri: link.uri.clone(),
-                            target_page: link.target_page,
-                            named_target: match &link.target {
-                                crate::document::LinkTarget::Named(name) => Some(name.clone()),
-                                _ => None,
-                            },
-                            rect: link.rect,
-                        });
-                    }
+                if matches_kind {
+                    results.push(DocumentLinkResult {
+                        page_number: link.page_number,
+                        kind: kind_str.to_string(),
+                        uri: link.uri.clone(),
+                        target_page: link.target_page,
+                        named_target: match &link.target {
+                            crate::document::LinkTarget::Named(name) => Some(name.clone()),
+                            _ => None,
+                        },
+                        rect: link.rect,
+                    });
                 }
             }
-
-            let response = DocumentGetLinksResult {
-                document_id: doc_id.clone(),
-                total_links: results.len(),
-                links: results,
-            };
-
-            serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".to_string())
-        } else {
-            serde_json::json!({
-                "error": format!("Document '{doc_id}' not found."),
-                "document_id": doc_id,
-                "total_links": 0,
-                "links": []
-            })
-            .to_string()
         }
+
+        let response = DocumentGetLinksResult {
+            document_id: doc_id.clone(),
+            total_links: results.len(),
+            links: results,
+        };
+
+        Ok(serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".to_string()))
     }
 
     /// Extract interactive form fields (AcroForms) from a document.
@@ -613,60 +583,54 @@ impl DocuGraphServer {
         name = "document_get_forms",
         description = "Extract interactive AcroForm fields (text inputs, checkboxes, radio buttons, dropdowns) with names, values, and page coordinates."
     )]
-    pub async fn document_get_forms(&self, params: Parameters<DocumentGetFormsParams>) -> String {
+    pub async fn document_get_forms(
+        &self,
+        params: Parameters<DocumentGetFormsParams>,
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
         let page_filter = params.0.page;
         let filled_only = params.0.filled_only.unwrap_or(false);
 
-        if let Some(doc) = self.store.get(doc_id) {
-            let mut results = Vec::new();
+        let doc = self.require_document(doc_id)?;
+        let mut results = Vec::new();
 
-            for field in &doc.forms {
-                if page_filter.is_some_and(|target_p| field.page_number != Some(target_p)) {
-                    continue;
-                }
-
-                if filled_only
-                    && field
-                        .value
-                        .as_deref()
-                        .map(|v| v.trim().is_empty())
-                        .unwrap_or(true)
-                {
-                    continue;
-                }
-
-                let type_str = field.field_type.as_str();
-
-                results.push(FormFieldResult {
-                    name: field.name.clone(),
-                    fully_qualified_name: field.fully_qualified_name.clone(),
-                    field_type: type_str.to_string(),
-                    value: field.value.clone(),
-                    default_value: field.default_value.clone(),
-                    read_only: field.read_only,
-                    required: field.required,
-                    page_number: field.page_number,
-                    rect: field.rect,
-                });
+        for field in &doc.forms {
+            if page_filter.is_some_and(|target_p| field.page_number != Some(target_p)) {
+                continue;
             }
 
-            let response = DocumentGetFormsResult {
-                document_id: doc_id.clone(),
-                total_fields: results.len(),
-                fields: results,
-            };
+            if filled_only
+                && field
+                    .value
+                    .as_deref()
+                    .map(|v| v.trim().is_empty())
+                    .unwrap_or(true)
+            {
+                continue;
+            }
 
-            serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".to_string())
-        } else {
-            serde_json::json!({
-                "error": format!("Document '{doc_id}' not found."),
-                "document_id": doc_id,
-                "total_fields": 0,
-                "fields": []
-            })
-            .to_string()
+            let type_str = field.field_type.as_str();
+
+            results.push(FormFieldResult {
+                name: field.name.clone(),
+                fully_qualified_name: field.fully_qualified_name.clone(),
+                field_type: type_str.to_string(),
+                value: field.value.clone(),
+                default_value: field.default_value.clone(),
+                read_only: field.read_only,
+                required: field.required,
+                page_number: field.page_number,
+                rect: field.rect,
+            });
         }
+
+        let response = DocumentGetFormsResult {
+            document_id: doc_id.clone(),
+            total_fields: results.len(),
+            fields: results,
+        };
+
+        Ok(serde_json::to_string_pretty(&response).unwrap_or_else(|_| "{}".to_string()))
     }
 
     /// Retrieve metadata for all embedded files and attachments inside a document.
@@ -677,40 +641,31 @@ impl DocuGraphServer {
     pub async fn document_get_attachments(
         &self,
         params: Parameters<DocumentGetAttachmentsParams>,
-    ) -> String {
+    ) -> Result<String, String> {
         let doc_id = &params.0.document_id;
-        if let Some(doc) = self.store.get(doc_id) {
-            let attachments: Vec<AttachmentSummaryResult> = doc
-                .attachments
-                .iter()
-                .map(|att| AttachmentSummaryResult {
-                    id: att.id.clone(),
-                    filename: att.filename.clone(),
-                    description: att.description.clone(),
-                    mime_type: att.mime_type.clone(),
-                    size_bytes: att.size_bytes,
-                    checksum_md5: att.checksum_md5.clone(),
-                    mod_date: att.mod_date.clone(),
-                    is_text: att.is_text,
-                    page_number: att.page_number,
-                })
-                .collect();
-
-            let res = DocumentGetAttachmentsResult {
-                document_id: doc_id.clone(),
-                total_attachments: attachments.len(),
-                attachments,
-            };
-            serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
-        } else {
-            serde_json::json!({
-                "error": format!("Document '{doc_id}' not found."),
-                "document_id": doc_id,
-                "total_attachments": 0,
-                "attachments": []
+        let doc = self.require_document(doc_id)?;
+        let attachments: Vec<AttachmentSummaryResult> = doc
+            .attachments
+            .iter()
+            .map(|att| AttachmentSummaryResult {
+                id: att.id.clone(),
+                filename: att.filename.clone(),
+                description: att.description.clone(),
+                mime_type: att.mime_type.clone(),
+                size_bytes: att.size_bytes,
+                checksum_md5: att.checksum_md5.clone(),
+                mod_date: att.mod_date.clone(),
+                is_text: att.is_text,
+                page_number: att.page_number,
             })
-            .to_string()
-        }
+            .collect();
+
+        let res = DocumentGetAttachmentsResult {
+            document_id: doc_id.clone(),
+            total_attachments: attachments.len(),
+            attachments,
+        };
+        Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
     }
 
     /// Read and decode the content of an embedded file attachment (e.g. ZUGFeRD XML, CSV, dataset).
@@ -726,64 +681,50 @@ impl DocuGraphServer {
         let name_or_id = &params.0.name_or_id;
         let max_bytes = params.0.max_bytes.unwrap_or(524_288); // 512 KB default limit
 
-        if let Some(doc) = self.store.get(doc_id) {
-            if let Some(att) = doc.get_attachment(name_or_id) {
-                let force_base64 = params.0.encoding.as_deref() == Some("base64");
-                let should_be_text = !force_base64 && att.is_text;
+        let doc = self.require_document(doc_id)?;
+        if let Some(att) = doc.get_attachment(name_or_id) {
+            let force_base64 = params.0.encoding.as_deref() == Some("base64");
+            let should_be_text = !force_base64 && att.is_text;
 
-                let (encoded_content, truncated) = if att.data.len() > max_bytes {
-                    let slice = &att.data[..max_bytes];
-                    if should_be_text {
-                        let text = String::from_utf8_lossy(slice).to_string();
-                        (text, true)
-                    } else {
-                        use base64::Engine;
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(slice);
-                        (b64, true)
-                    }
-                } else if should_be_text {
-                    let text = String::from_utf8_lossy(&att.data).to_string();
-                    (text, false)
+            let (encoded_content, truncated) = if att.data.len() > max_bytes {
+                let slice = &att.data[..max_bytes];
+                if should_be_text {
+                    let text = String::from_utf8_lossy(slice).to_string();
+                    (text, true)
                 } else {
                     use base64::Engine;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&att.data);
-                    (b64, false)
-                };
-
-                let res = DocumentReadAttachmentResult {
-                    document_id: doc_id.clone(),
-                    filename: att.filename.clone(),
-                    mime_type: att.mime_type.clone(),
-                    size_bytes: att.size_bytes,
-                    encoding: if should_be_text {
-                        "text".to_string()
-                    } else {
-                        "base64".to_string()
-                    },
-                    content: encoded_content,
-                    truncated,
-                };
-
-                Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(slice);
+                    (b64, true)
+                }
+            } else if should_be_text {
+                let text = String::from_utf8_lossy(&att.data).to_string();
+                (text, false)
             } else {
-                Err(serde_json::json!({
-                    "error": format!("Attachment '{name_or_id}' not found in document '{doc_id}'."),
-                    "document_id": doc_id,
-                    "filename": name_or_id,
-                    "size_bytes": 0,
-                    "content": ""
-                })
-                .to_string())
-            }
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&att.data);
+                (b64, false)
+            };
+
+            let res = DocumentReadAttachmentResult {
+                document_id: doc_id.clone(),
+                filename: att.filename.clone(),
+                mime_type: att.mime_type.clone(),
+                size_bytes: att.size_bytes,
+                encoding: if should_be_text {
+                    "text".to_string()
+                } else {
+                    "base64".to_string()
+                },
+                content: encoded_content,
+                truncated,
+            };
+
+            Ok(serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string()))
         } else {
-            Err(serde_json::json!({
-                "error": format!("Document '{doc_id}' not found."),
-                "document_id": doc_id,
-                "filename": name_or_id,
-                "size_bytes": 0,
-                "content": ""
-            })
-            .to_string())
+            Err(format!(
+                "Attachment '{name_or_id}' not found in document '{doc_id}'. \
+                     Use 'document_get_attachments' to list the attachments of this document."
+            ))
         }
     }
 }
