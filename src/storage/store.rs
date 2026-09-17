@@ -31,6 +31,14 @@ impl DocumentStore {
         store
     }
 
+    /// The absolute directory this store persists to, if it persists at all.
+    ///
+    /// Worth surfacing rather than keeping internal: when the corpus comes back
+    /// empty, the directory that was looked in is the answer to why.
+    pub fn cache_dir(&self) -> Option<std::path::PathBuf> {
+        self.disk.as_ref().map(|cache| cache.dir())
+    }
+
     /// Insert or update a document in memory and optionally persist to disk cache.
     pub fn insert(&self, doc: Document) -> Result<()> {
         if let Some(ref cache) = self.disk {

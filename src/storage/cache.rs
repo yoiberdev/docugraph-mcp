@@ -23,11 +23,67 @@ impl DiskCache {
         Ok(Self { cache_dir: dir })
     }
 
-    /// Default cache directory in current working directory or system temp.
+    /// Where documents are cached, resolved in three steps.
+    ///
+    /// This directory is the only thing connecting `docugraph index` to
+    /// `docugraph serve`: they are separate processes and the cache is the handoff.
+    /// Resolving it relative to the current directory made that handoff depend on
+    /// where each process happened to be started, and an MCP client launched
+    /// without a fixed `cwd` therefore reported an empty corpus however many PDFs
+    /// had been indexed - connected, 15 tools, and nothing in them.
+    ///
+    /// So: an explicit `DOCUGRAPH_CACHE_DIR` wins; otherwise a `.docugraph_cache`
+    /// that already exists beside the current directory is kept, so anyone already
+    /// relying on a project-local cache keeps it; otherwise the per-user data
+    /// directory, which is the same for every process regardless of where it starts.
     pub fn default_dir() -> PathBuf {
-        std::env::var("DOCUGRAPH_CACHE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(".docugraph_cache"))
+        if let Ok(explicit) = std::env::var("DOCUGRAPH_CACHE_DIR") {
+            let dir = PathBuf::from(explicit);
+            if !dir.as_os_str().is_empty() {
+                return dir;
+            }
+        }
+
+        let local = PathBuf::from(".docugraph_cache");
+        if local.is_dir() {
+            return local;
+        }
+
+        Self::user_data_dir()
+    }
+
+    /// The per-user data directory, found without pulling in a crate for it.
+    ///
+    /// Falls back to the working directory only if the platform tells us nothing,
+    /// which keeps the old behaviour as the last resort rather than the default.
+    fn user_data_dir() -> PathBuf {
+        let base = if cfg!(windows) {
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+        } else {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+                })
+        };
+
+        match base {
+            Some(dir) => dir.join("docugraph").join("cache"),
+            None => PathBuf::from(".docugraph_cache"),
+        }
+    }
+
+    /// The absolute path this cache writes to, for telling the user where its
+    /// documents actually live.
+    ///
+    /// The Windows verbatim prefix is stripped: this path is printed for a person
+    /// to read and paste into a config file, and `\\?\C:\...` is neither.
+    pub fn dir(&self) -> PathBuf {
+        let absolute = fs::canonicalize(&self.cache_dir).unwrap_or_else(|_| self.cache_dir.clone());
+        match absolute.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+            Some(plain) => PathBuf::from(plain),
+            None => absolute,
+        }
     }
 
     /// Path to a cached document JSON file by SHA-256 hash.

@@ -21,7 +21,8 @@
 /data/
 /indexes/
 /storage_cache/
-/.docugraph_cache/
+# Not anchored: an indexing run creates this wherever it is started from.
+.docugraph_cache/
 /evaluation/output/
 
 # PDF files with potential copyright (User provided only)

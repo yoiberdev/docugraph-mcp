@@ -179,16 +179,21 @@ Evidencia: [Doc: manual-git p. 37 § ramas-locales]"
 
 DocuGraph se comunica mediante **stdio (JSON-RPC 2.0)** manteniendo `stdout` estrictamente limpio (los logs estructurados se emiten exclusivamente a `stderr`).
 
-### Antigravity IDE
-Agrega la configuración en tu archivo `mcp_config.json`:
+> **Indica siempre `DOCUGRAPH_CACHE_DIR`.** `docugraph index` y `docugraph serve` son dos procesos
+> distintos y ese directorio es lo único que los conecta. Si no lo fijas, cada uno resuelve su propio
+> directorio por defecto y el servidor arranca con el corpus vacío aunque hayas indexado decenas de PDFs.
+> Usa **la misma ruta absoluta** al indexar y aquí.
+
+### Claude Desktop / Claude Code / Trae / Kiro / Antigravity
 
 ```json
 {
   "mcpServers": {
     "docugraph": {
-      "command": "cargo",
-      "args": ["run", "--manifest-path", "C:/proyectos/docugraph-mcp/Cargo.toml", "--release", "--quiet", "--", "serve"],
+      "command": "/ruta/a/docugraph",
+      "args": ["serve"],
       "env": {
+        "DOCUGRAPH_CACHE_DIR": "/ruta/a/tu/cache-docugraph",
         "RUST_LOG": "info"
       }
     }
@@ -196,17 +201,22 @@ Agrega la configuración en tu archivo `mcp_config.json`:
 }
 ```
 
-### Claude Desktop / Claude Code / Trae / Kiro
-```json
-{
-  "mcpServers": {
-    "docugraph": {
-      "command": "C:/proyectos/docugraph-mcp/target/release/docugraph.exe",
-      "args": ["serve"]
-    }
-  }
-}
+En Windows, `"command": "C:/ruta/a/docugraph.exe"` y una ruta como
+`"DOCUGRAPH_CACHE_DIR": "C:/Users/TU_USUARIO/.docugraph_cache"`.
+
+Y al indexar, apuntando al mismo sitio:
+
+```bash
+DOCUGRAPH_CACHE_DIR=/ruta/a/tu/cache-docugraph docugraph index ./manuales/
 ```
+
+**Para comprobar que están conectados:** el servidor imprime en `stderr` la ruta absoluta que resolvió
+al arrancar, y `document_list` la devuelve en el campo `cache_dir`. Si ahí no aparecen tus documentos,
+las dos rutas no coinciden.
+
+Sin la variable, la ruta por defecto es `./.docugraph_cache` si ya existe junto al directorio actual y,
+si no, el directorio de datos del usuario (`%LOCALAPPDATA%\docugraph\cache` en Windows,
+`~/.local/share/docugraph/cache` en Linux y macOS).
 
 ---
 

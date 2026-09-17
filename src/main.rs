@@ -139,10 +139,26 @@ async fn main() -> anyhow::Result<()> {
     let cache = DiskCache::new(DiskCache::default_dir()).ok();
     let store = DocumentStore::new(cache);
 
+    // Always say which directory this process resolved. `index` and `serve` are
+    // separate processes that meet only here, so when the corpus looks empty this
+    // one line is the difference between a five-second diagnosis and uninstalling.
+    match store.cache_dir() {
+        Some(dir) => info!(target: "cli", cache_dir = %dir.display(), "Document cache"),
+        None => eprintln!(
+            "WARNING: no document cache could be opened. Set DOCUGRAPH_CACHE_DIR to a writable directory."
+        ),
+    }
+
     match cli.command {
         Commands::Serve => {
             info!("Starting DocuGraph MCP server on stdio transport...");
-            eprintln!("DocuGraph MCP ready to accept JSON-RPC on stdin");
+            eprintln!(
+                "DocuGraph MCP ready to accept JSON-RPC on stdin (cache: {})",
+                store
+                    .cache_dir()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            );
             let server = docugraph::mcp::DocuGraphServer::with_store(store);
             let service = server.serve(rmcp::transport::stdio()).await?;
             service.waiting().await?;

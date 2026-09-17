@@ -120,6 +120,24 @@ pub struct DocumentSummary {
     pub scanned_pages_count: u32,
 }
 
+/// What `document_list` returns.
+///
+/// An object rather than a bare array so that the empty case can say where it
+/// looked. `index` and `serve` are separate processes that meet only through the
+/// cache directory, so an empty corpus almost always means they resolved
+/// different directories - and a bare `[]` gives an agent no way to tell that
+/// from "nothing has been indexed yet".
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentListResult {
+    /// Absolute directory these documents were read from.
+    pub cache_dir: String,
+    pub total: usize,
+    pub documents: Vec<DocumentSummary>,
+    /// Present only when the corpus is empty: what to do about it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
 /// Detailed structural outline returned by `document_info`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DocumentInfoResult {

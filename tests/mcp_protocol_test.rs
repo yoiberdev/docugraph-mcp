@@ -3,11 +3,21 @@ use docugraph::mcp::{
     DocuGraphServer,
     tools::{DocumentInfoParams, PingParams},
 };
+use docugraph::storage::DocumentStore;
 use rmcp::{ServerHandler, handler::server::wrapper::Parameters};
+
+/// A server backed by nothing but memory.
+///
+/// `DocuGraphServer::new()` binds the real cache directory, so `register_document`
+/// used to persist these fixtures into it: they then showed up in `docugraph list`
+/// as if they were the user's own documents, and in `docugraph bench`'s denominator.
+fn in_memory_server() -> DocuGraphServer {
+    DocuGraphServer::with_store(DocumentStore::new(None))
+}
 
 #[tokio::test]
 async fn test_server_info_and_capabilities() {
-    let server = DocuGraphServer::new();
+    let server = in_memory_server();
     let info = server.get_info();
 
     assert_eq!(info.server_info.name, "docugraph-mcp");
@@ -17,7 +27,7 @@ async fn test_server_info_and_capabilities() {
 
 #[tokio::test]
 async fn test_document_ping_tool() {
-    let server = DocuGraphServer::new();
+    let server = in_memory_server();
 
     // Default ping message
     let resp = server
@@ -36,7 +46,7 @@ async fn test_document_ping_tool() {
 
 #[tokio::test]
 async fn test_document_list_tool() {
-    let server = DocuGraphServer::new();
+    let server = in_memory_server();
     let doc = Document::new(DocumentMetadata {
         id: "sample-doc".to_string(),
         title: "Sample Doc".to_string(),
@@ -56,21 +66,23 @@ async fn test_document_list_tool() {
     server.register_document(doc).await;
 
     let list_json = server.document_list().await;
-    let parsed: serde_json::Value = serde_json::from_str(&list_json).expect("valid JSON array");
-    assert!(parsed.is_array());
-    assert!(!parsed.as_array().unwrap().is_empty());
+    let parsed: serde_json::Value = serde_json::from_str(&list_json).expect("valid JSON result");
+    let documents = parsed["documents"].as_array().expect("documents array");
+    assert!(!documents.is_empty());
+    assert!(documents.iter().any(|d| d["id"] == "sample-doc"));
     assert!(
-        parsed
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["id"] == "sample-doc")
+        parsed["cache_dir"].is_string(),
+        "document_list must say which directory it read from"
+    );
+    assert!(
+        parsed["hint"].is_null(),
+        "a populated corpus needs no remediation hint"
     );
 }
 
 #[tokio::test]
 async fn test_document_info_tool() {
-    let server = DocuGraphServer::new();
+    let server = in_memory_server();
     let doc = Document::new(DocumentMetadata {
         id: "test_doc_gof".to_string(),
         title: "GoF Design Patterns".to_string(),
@@ -104,7 +116,7 @@ async fn test_document_info_tool() {
 
 #[tokio::test]
 async fn test_document_list_deterministic_order() {
-    let server = DocuGraphServer::new();
+    let server = in_memory_server();
     for id in ["zeta-doc", "alpha-doc", "mid-doc"] {
         server
             .register_document(Document::new(DocumentMetadata {
@@ -119,7 +131,8 @@ async fn test_document_list_deterministic_order() {
     }
 
     let list_json = server.document_list().await;
-    let list: Vec<serde_json::Value> = serde_json::from_str(&list_json).expect("valid JSON array");
+    let parsed: serde_json::Value = serde_json::from_str(&list_json).expect("valid JSON result");
+    let list = parsed["documents"].as_array().expect("documents array");
     let ids: Vec<&str> = list.iter().map(|d| d["id"].as_str().unwrap()).collect();
 
     // Verify list is strictly sorted alphabetically by id
@@ -135,7 +148,7 @@ async fn test_document_list_deterministic_order() {
 async fn test_read_pages_validation_and_span_limit() {
     use docugraph::mcp::tools::DocumentReadPagesParams;
 
-    let server = DocuGraphServer::new();
+    let server = in_memory_server();
     server
         .register_document(Document::new(DocumentMetadata {
             id: "big-book".to_string(),
@@ -203,4 +216,36 @@ async fn test_read_pages_validation_and_span_limit() {
         "Must cap end page to start + 29 (30 pages max)"
     );
     assert!(capped_read.contains("Rango limitado a 30 páginas"));
+}
+
+/// An empty corpus must say where it looked, not just return nothing.
+///
+/// Regression: `index` and `serve` are separate processes joined only by the cache
+/// directory, so an empty corpus almost always means they resolved different ones.
+/// A bare `[]` gave an agent no way to tell that from "nothing indexed yet", and
+/// the resolved path appeared nowhere - not even under RUST_LOG=debug.
+#[tokio::test]
+async fn test_empty_corpus_reports_where_it_looked() {
+    let server = in_memory_server();
+    let json = server.document_list().await;
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON result");
+
+    assert_eq!(parsed["total"], 0);
+    assert!(parsed["documents"].as_array().unwrap().is_empty());
+
+    let hint = parsed["hint"]
+        .as_str()
+        .expect("an empty corpus must carry a remediation hint");
+    assert!(
+        hint.contains("DOCUGRAPH_CACHE_DIR"),
+        "the hint must name the variable that connects indexing to serving: {hint}"
+    );
+    assert!(
+        hint.contains("docugraph index"),
+        "the hint must name the command that fills the cache: {hint}"
+    );
+    assert!(
+        parsed["cache_dir"].is_string(),
+        "the directory searched must always be reported"
+    );
 }

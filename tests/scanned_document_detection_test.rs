@@ -2,6 +2,7 @@ use docugraph::document::{
     Document, DocumentMetadata, Page, PageKind, inspect_page_images, load_pdf_from_path,
 };
 use docugraph::mcp::{DocuGraphServer, tools::*};
+use docugraph::storage::DocumentStore;
 use lopdf::content::{Content, Operation};
 use lopdf::{Document as LopdfDoc, Object, Stream, dictionary};
 use rmcp::handler::server::wrapper::Parameters;
@@ -200,7 +201,8 @@ fn test_blank_page_classified_as_empty() {
 
 #[tokio::test]
 async fn test_mcp_server_scanned_warnings_in_tools() {
-    let server = DocuGraphServer::new();
+    // In-memory: DocuGraphServer::new() would persist this fixture into the real cache.
+    let server = DocuGraphServer::with_store(DocumentStore::new(None));
     let mut doc = Document::new(DocumentMetadata {
         id: "doc-with-scans".to_string(),
         title: "Manual Escaneado".to_string(),

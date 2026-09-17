@@ -176,7 +176,7 @@ impl DocuGraphServer {
     /// List all indexed documents available in the knowledge base.
     #[tool(
         name = "document_list",
-        description = "List all indexed PDF documents currently available with page counts and SHA-256 hashes."
+        description = "List the indexed PDF documents, with page counts, SHA-256 hashes, and the cache directory they were read from. Call this first to learn the document_id values the other tools take."
     )]
     pub async fn document_list(&self) -> String {
         let metas = self.store.list_documents();
@@ -194,7 +194,29 @@ impl DocuGraphServer {
                 scanned_pages_count: m.scanned_pages_count,
             })
             .collect();
-        serde_json::to_string_pretty(&list).unwrap_or_else(|_| "[]".to_string())
+
+        let cache_dir = self
+            .store
+            .cache_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "(in-memory only)".to_string());
+
+        let hint = list.is_empty().then(|| {
+            format!(
+                "No documents found in {cache_dir}. Index one with `docugraph index <path.pdf>`, \
+                 and make sure it writes to this same directory - set DOCUGRAPH_CACHE_DIR to it in \
+                 both the indexing shell and this server's MCP configuration, since they are \
+                 separate processes."
+            )
+        });
+
+        let result = DocumentListResult {
+            cache_dir,
+            total: list.len(),
+            documents: list,
+            hint,
+        };
+        serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Retrieve high-level metadata and section preview for a specific document.
