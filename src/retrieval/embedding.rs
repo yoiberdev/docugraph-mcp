@@ -1,7 +1,6 @@
 //! Modular embedding provider abstractions and vector operations.
 
 use anyhow::Result;
-use sha2::{Digest, Sha256};
 
 /// Trait for generating semantic or lexical embedding vectors.
 pub trait EmbeddingProvider: Send + Sync {
@@ -69,22 +68,28 @@ impl EmbeddingProvider for DeterministicSubwordEmbedding {
             return Ok(vector);
         }
 
+        // Character offsets, so an n-gram is a slice of the word rather than a
+        // freshly allocated String per window. The features are the same strings
+        // as before; only where they come from changed.
+        let mut starts: Vec<usize> = Vec::new();
+
         for word in words {
             // Whole word hash
             hash_feature_into(word, 2.0, &mut vector);
 
+            starts.clear();
+            starts.extend(word.char_indices().map(|(i, _)| i));
+            let chars = starts.len();
+
             // Subword 3-grams and 4-grams
-            let chars: Vec<char> = word.chars().collect();
-            if chars.len() >= 3 {
-                for window in chars.windows(3) {
-                    let s: String = window.iter().collect();
-                    hash_feature_into(&s, 1.0, &mut vector);
+            for (k, &start) in starts.iter().enumerate() {
+                if k + 3 <= chars {
+                    let end = starts.get(k + 3).copied().unwrap_or(word.len());
+                    hash_feature_into(&word[start..end], 1.0, &mut vector);
                 }
-            }
-            if chars.len() >= 4 {
-                for window in chars.windows(4) {
-                    let s: String = window.iter().collect();
-                    hash_feature_into(&s, 1.2, &mut vector);
+                if k + 4 <= chars {
+                    let end = starts.get(k + 4).copied().unwrap_or(word.len());
+                    hash_feature_into(&word[start..end], 1.2, &mut vector);
                 }
             }
         }
@@ -99,14 +104,39 @@ impl EmbeddingProvider for DeterministicSubwordEmbedding {
     }
 }
 
+/// Place one feature into its bucket with its sign.
+///
+/// The hashing trick needs the features spread evenly across the buckets. It does
+/// not need preimage or collision resistance: there is no adversary choosing
+/// n-grams, and only the bucket index and one sign bit ever leave this function.
+/// SHA-256 was doing 64 rounds over a 64-byte block to scatter strings like "est",
+/// once per word and once per 3-gram and 4-gram of that word.
+///
+/// FNV-1a plus a splitmix finalizer buys the same uniformity for a few
+/// instructions. The finalizer is what makes the choice safe rather than merely
+/// cheap: FNV-1a alone mixes its low bits well but its high bits poorly on short
+/// inputs, and the bucket and the sign must both be well distributed.
 fn hash_feature_into(feature: &str, weight: f32, vector: &mut [f32]) {
-    let mut hasher = Sha256::new();
-    hasher.update(feature.as_bytes());
-    let hash = hasher.finalize();
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET;
+    for byte in feature.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    // splitmix64 finalizer: full avalanche, so every output bit depends on every
+    // input bit.
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    hash ^= hash >> 33;
 
     let dim = vector.len();
-    let bucket = (u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]) as usize) % dim;
-    let sign = if hash[4] & 1 == 0 { 1.0 } else { -1.0 };
+    let bucket = (hash % dim as u64) as usize;
+    let sign = if (hash >> 63) & 1 == 0 { 1.0 } else { -1.0 };
 
     vector[bucket] += sign * weight;
 }
