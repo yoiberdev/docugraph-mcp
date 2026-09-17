@@ -832,3 +832,128 @@ fn test_reported_bm25_score_is_real() {
         );
     }
 }
+
+/// A missing accent must not turn a covered question into "no evidence".
+///
+/// Regression: an absent term takes the maximum IDF and the admission bar is the
+/// mean of the query's term IDFs, so one dropped tilde lifted the bar above
+/// anything the corpus could supply. `intención del patrón Strategy` returned
+/// passages while `intencion del patron Strategy` was refused outright - the
+/// strongest verdict the system can give, about a document that contains the text.
+#[test]
+fn test_accents_are_folded_on_both_sides() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "es-doc".to_string(),
+        title: "Manual".to_string(),
+        total_pages: 2,
+        content_hash: "hash-es".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    doc.add_page(Page::new(
+        1,
+        "La intención del patrón Strategy es definir una familia de algoritmos \
+         intercambiables dentro del diseño orientado a objetos.",
+    ));
+    doc.add_page(Page::new(
+        2,
+        "La configuración se describe en la sección de implementación.",
+    ));
+    doc.sections
+        .push(SectionNode::new("s", "Intención", 1, 1, 2, None));
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    for query in [
+        "intención del patrón Strategy",
+        "intencion del patron Strategy",
+        "diseno orientado a objetos",
+        "configuracion",
+    ] {
+        let hits = retriever
+            .search(query, 5, &HybridWeights::DEFAULT)
+            .unwrap_or_else(|_| panic!("'{query}' is covered by this document"));
+        assert!(!hits.is_empty(), "'{query}' returned nothing");
+    }
+}
+
+/// Typographic ligatures in the source must match a query that spells them out.
+#[test]
+fn test_ligatures_match_their_spelled_out_form() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "lig".to_string(),
+        title: "Ligatures".to_string(),
+        total_pages: 1,
+        content_hash: "hash-lig".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    // What a LaTeX or InDesign PDF actually stores for "configuration flags".
+    doc.add_page(Page::new(
+        1,
+        "The con\u{FB01}guration \u{FB02}ags control the sensor calibration.",
+    ));
+    doc.sections
+        .push(SectionNode::new("s", "Setup", 1, 1, 1, None));
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    let hits = retriever
+        .search("configuration flags", 5, &HybridWeights::DEFAULT)
+        .expect("the ligature forms must match the spelled-out query");
+    assert!(!hits.is_empty());
+}
+
+/// `ñ` is a letter, not an accented `n`, and must stay distinct.
+#[test]
+fn test_enye_is_not_folded_into_n() {
+    use docugraph::retrieval::Bm25Index;
+
+    let mut doc = Document::new(DocumentMetadata {
+        id: "enye".to_string(),
+        title: "Enye".to_string(),
+        total_pages: 1,
+        content_hash: "hash-enye".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    doc.add_page(Page::new(
+        1,
+        "El año pasado se revisó el diseño. El ano es otra cosa completamente distinta.",
+    ));
+    doc.sections
+        .push(SectionNode::new("s", "Texto", 1, 1, 1, None));
+
+    let index = Bm25Index::build_from_documents(&[doc], None);
+    let profile = index.profile_query("año");
+    assert_eq!(
+        profile.terms[0].term, "año",
+        "folding ñ would make año and ano the same term"
+    );
+}
+
+/// An interrogative carries no topic and must not raise the admission bar.
+///
+/// Regression: "what" and "does" are absent from a Spanish corpus, so they took
+/// the maximum IDF and lifted the bar past what the real terms could supply.
+#[test]
+fn test_question_words_do_not_block_a_covered_query() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "qa".to_string(),
+        title: "QA".to_string(),
+        total_pages: 1,
+        content_hash: "hash-qa".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    doc.add_page(Page::new(
+        1,
+        "El patrón Strategy define una familia de algoritmos y los hace intercambiables.",
+    ));
+    doc.sections
+        .push(SectionNode::new("s", "Strategy", 1, 1, 1, None));
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    let hits = retriever
+        .search("What does Strategy do", 5, &HybridWeights::DEFAULT)
+        .expect("the question words must not veto a covered topic");
+    assert!(!hits.is_empty());
+}

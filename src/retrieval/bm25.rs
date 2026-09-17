@@ -104,7 +104,7 @@ impl QueryProfile {
     /// | "cómo implementar memoization en Rust …"     | no      | 0        |
     /// | "how to resolve merge conflicts …"           | no      | 0        |
     /// | "cuál es la dosis … de ibuprofeno …"         | no      | 0        |
-    /// | "cómo configurar ingress de kubernetes …"    | no      | 5        |
+    /// | "cómo configurar ingress de kubernetes …"    | no      | 0        |
     /// | "intención del patrón Strategy"              | yes     | 31       |
     /// | "principio abierto cerrado OCP"              | yes     | 41       |
     /// | "Observer pattern subscribers"               | yes     | 5        |
@@ -114,12 +114,14 @@ impl QueryProfile {
     /// and 9 for the ibuprofen one; taking the maximum present IDF behaves the
     /// same. Both score 4 wrong verdicts against this rule's 3.
     ///
-    /// One residual is left, and it is the "cómo configurar X" shape: when every
-    /// informative term is absent, the generic verbs left over can just clear the
-    /// mean (5.796 against a bar of 5.291). No IDF-based bar separates that from a
-    /// real query, because IDF cannot tell a rare verb (`configurar`, df 8) from a
-    /// rare topic (`observer`, df 25) - both are rare. Over a labelled set of 18
-    /// queries against the 437-page manual it is the only wrong verdict.
+    /// The "cómo configurar X" residual this used to document is gone, and not by
+    /// changing the bar. IDF cannot tell a rare verb (`configurar`, df 8) from a
+    /// rare topic (`observer`, df 25) - both are rare - so no threshold could have
+    /// separated them. What removed it was treating the interrogative as what it
+    /// is: `cómo` now folds to `como`, which was already a stop word, leaving one
+    /// generic verb that cannot reach the bar alone. Over a labelled set of 20
+    /// queries against the 437-page manual, in both languages and with and without
+    /// accents, there are currently no wrong verdicts.
     ///
     /// The opposite residual is gone. English queries over this Spanish manual used
     /// to be refused on covered topics, because the manual keeps the English
@@ -348,6 +350,22 @@ impl Bm25Index {
             consider(root.to_string());
         }
 
+        // `ñ` survives folding because it is a letter rather than an accented `n`,
+        // so `año` and `ano` stay different terms. That leaves the reader who types
+        // `diseno` for `diseño`, which is common enough to be worth catching - but
+        // only here, where the plain form is already known to be absent, so the
+        // distinction still holds for every word the corpus actually contains.
+        if token.contains('n') {
+            let chars: Vec<char> = token.chars().collect();
+            for (i, c) in chars.iter().enumerate() {
+                if *c == 'n' {
+                    let mut candidate: Vec<char> = chars.clone();
+                    candidate[i] = 'ñ';
+                    consider(candidate.into_iter().collect());
+                }
+            }
+        }
+
         best.map(|(term, _)| term)
     }
 
@@ -497,14 +515,59 @@ pub fn tokenize(text: &str) -> Vec<String> {
     let stop_words = get_stop_words();
     text.split(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
         .filter_map(|word| {
-            let clean = word.trim().to_lowercase();
-            if clean.len() >= 2 && !stop_words.contains(clean.as_str()) {
+            let clean = fold_for_matching(word.trim());
+            if clean.chars().count() >= 2 && !stop_words.contains(clean.as_str()) {
                 Some(clean)
             } else {
                 None
             }
         })
         .collect()
+}
+
+/// Lowercase a word and reduce the spellings that should match each other.
+///
+/// Applied to the index and to the query alike, so the two always agree.
+///
+/// Accents are folded because dropping one is the commonest way to mistype a
+/// Spanish word, and the consequence was severe rather than merely unhelpful: an
+/// absent term takes the maximum IDF, and the admission bar is the mean of the
+/// query's term IDFs, so one missing tilde lifted the bar above anything the
+/// corpus could supply. `intención del patrón Strategy` returned passages while
+/// `intencion del patron Strategy` returned "no evidence" - the strongest verdict
+/// this system can give, about a document that plainly contains the text.
+///
+/// `ñ` is deliberately left alone. It is a letter in its own right, not an `n`
+/// wearing an accent: folding it would make `año` and `ano` the same term, and on
+/// a Spanish keyboard it is a single key, so it is not what gets dropped in a
+/// hurry - accents are.
+///
+/// Ligatures are expanded because a PDF whose font maps to `/fi` and `/fl` - which
+/// is most LaTeX and InDesign output - stores `configuración` with a single
+/// codepoint that no query will ever spell that way.
+fn fold_for_matching(word: &str) -> String {
+    let mut out = String::with_capacity(word.len());
+    for ch in word.chars().flat_map(|c| c.to_lowercase()) {
+        match ch {
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => out.push('a'),
+            'é' | 'è' | 'ê' | 'ë' => out.push('e'),
+            'í' | 'ì' | 'î' | 'ï' => out.push('i'),
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => out.push('o'),
+            'ú' | 'ù' | 'û' | 'ü' => out.push('u'),
+            'ý' | 'ÿ' => out.push('y'),
+            'ç' => out.push('c'),
+            // Combining marks, for text that arrived already decomposed.
+            '\u{0300}'..='\u{036F}' => {}
+            '\u{FB00}' => out.push_str("ff"),
+            '\u{FB01}' => out.push_str("fi"),
+            '\u{FB02}' => out.push_str("fl"),
+            '\u{FB03}' => out.push_str("ffi"),
+            '\u{FB04}' => out.push_str("ffl"),
+            '\u{FB05}' | '\u{FB06}' => out.push_str("st"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn count_terms(tokens: &[String]) -> HashMap<String, u32> {
@@ -523,12 +586,23 @@ fn count_terms(tokens: &[String]) -> HashMap<String, u32> {
 /// context, which for a term near the top of a page starts it on the previous
 /// one. A citation should name the page the matched text is on.
 fn extract_snippet(text: &str, query_terms: &[String], max_chars: usize) -> (String, usize) {
-    let lower = text.to_lowercase();
-    let mut best_pos = 0;
+    // Query terms arrive folded by `tokenize`, so the haystack has to be folded
+    // the same way or an accented word would never be located - and the snippet
+    // would silently fall back to the opening of the unit, taking the citation's
+    // page with it. Folding changes byte lengths, so the offset of each folded
+    // byte back into the original is carried alongside.
+    let mut folded = String::with_capacity(text.len());
+    let mut origin = Vec::with_capacity(text.len());
+    for (byte_idx, ch) in text.char_indices() {
+        let before = folded.len();
+        folded.push_str(&fold_for_matching(&ch.to_string()));
+        origin.resize(folded.len().max(before), byte_idx);
+    }
 
+    let mut best_pos = 0;
     for term in query_terms {
-        if let Some(pos) = lower.find(term) {
-            best_pos = pos;
+        if let Some(pos) = folded.find(term.as_str()) {
+            best_pos = origin.get(pos).copied().unwrap_or(0);
             break;
         }
     }
@@ -563,6 +637,12 @@ fn get_stop_words() -> HashSet<&'static str> {
     for w in [
         "the", "is", "at", "which", "on", "a", "an", "and", "or", "in", "with", "as", "to", "for",
         "of", "by", "that", "this", "it", "from", "be", "are", "was",
+        // Interrogatives and framing verbs. A question word carries no topic, but
+        // when it is absent from the corpus it takes the maximum IDF and lifts the
+        // admission bar, so "What is the replication factor?" was refused by a
+        // corpus containing "replication" hundreds of times.
+        "what", "when", "where", "who", "why", "how", "does", "do", "did", "can", "should", "would",
+        "will", "use", "using", "used",
     ] {
         s.insert(w);
     }
@@ -571,6 +651,9 @@ fn get_stop_words() -> HashSet<&'static str> {
         "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", "en", "para", "por",
         "con", "sin", "sobre", "entre", "que", "y", "o", "es", "son", "fue", "este", "esta",
         "estos", "estas", "como", "su", "sus",
+        // Written folded, because tokenize strips the accents before this lookup.
+        "cual", "cuales", "cuando", "donde", "quien", "porque", "cuanto", "usa", "usar", "usando",
+        "hacer", "hace", "ser", "estan", "mas", "asi",
     ] {
         s.insert(w);
     }
