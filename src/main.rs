@@ -356,7 +356,19 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let retriever = HybridRetriever::build(&docs, None, None);
-            let hits = retriever.search(&query, limit);
+            let hits = match retriever.search(&query, limit) {
+                Ok(hits) => hits,
+                Err(no_evidence) => {
+                    eprintln!("No matches found for query: '{}'", query);
+                    if !no_evidence.absent_terms.is_empty() {
+                        eprintln!(
+                            "Terms absent from the indexed corpus: {}",
+                            no_evidence.absent_terms.join(", ")
+                        );
+                    }
+                    return Ok(());
+                }
+            };
 
             if hits.is_empty() {
                 eprintln!("No matches found for query: '{}'", query);

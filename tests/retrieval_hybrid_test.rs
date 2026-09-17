@@ -153,7 +153,9 @@ fn test_hybrid_search_scoring() {
     let doc = create_sample_design_pattern_doc();
     let retriever = HybridRetriever::build(&[doc], None, None);
 
-    let hits = retriever.search("encapsulate interchangeable algorithms", 3);
+    let hits = retriever
+        .search("encapsulate interchangeable algorithms", 3)
+        .expect("the sample document covers this query");
     assert!(!hits.is_empty());
     assert!(hits[0].final_score > 0.3);
     assert!(hits[0].bm25_score > 0.0);
@@ -165,7 +167,9 @@ fn test_hybrid_search_scoring() {
 fn test_context_budgeter_and_evidence() {
     let doc = create_sample_design_pattern_doc();
     let retriever = HybridRetriever::build(&[doc], None, None);
-    let hits = retriever.search("interchangeable algorithms", 5);
+    let hits = retriever
+        .search("interchangeable algorithms", 5)
+        .expect("the sample document covers this query");
 
     let budget = ContextBudget {
         max_tokens: 100,
@@ -200,4 +204,90 @@ fn test_design_patterns_dynamic_adapter() {
     assert_eq!(p1.name, "Strategy");
     assert_eq!(p2.name, "State");
     assert!(p2.intent.unwrap().contains("internal state"));
+}
+
+/// A query the corpus cannot answer must produce no evidence at all.
+///
+/// Regression: every section unit used to clear the inclusion threshold on its
+/// structural bonus alone (0.20 * 0.3 = 0.06 > 0.05), and pages cleared it on
+/// embedding noise, so an off-topic question returned section openings carrying
+/// real page numbers and real `[Doc: ... p. ... § ...]` citations.
+#[test]
+fn test_uncovered_query_yields_no_evidence_instead_of_cited_noise() {
+    let doc = create_sample_design_pattern_doc();
+    let retriever = HybridRetriever::build(&[doc], None, None);
+
+    let err = retriever
+        .search("receta de paella valenciana con azafrán y garrofón", 5)
+        .expect_err("a cookery question must not retrieve from a design patterns book");
+
+    assert!(
+        err.absent_terms.contains(&"paella".to_string()),
+        "the refusal must name the terms the corpus lacks, got: {:?}",
+        err.absent_terms
+    );
+    assert!(
+        err.best_matched_idf < err.required_idf,
+        "no passage should have cleared the bar: {} vs {}",
+        err.best_matched_idf,
+        err.required_idf
+    );
+
+    let md = err.to_markdown();
+    assert!(md.contains("Sin evidencia"));
+    assert!(
+        !md.contains("[Doc:"),
+        "a refusal must never carry a citation"
+    );
+}
+
+/// The admission bar rises for absent terms, so a query mixing known words with
+/// unknown ones is still refused rather than answered from the known ones alone.
+#[test]
+fn test_partially_matching_query_is_refused_when_key_terms_are_absent() {
+    let doc = create_sample_design_pattern_doc();
+    let retriever = HybridRetriever::build(&[doc], None, None);
+
+    let result = retriever.search(
+        "how to implement memoization with Rust procedural macros",
+        5,
+    );
+    assert!(
+        result.is_err(),
+        "matching only the filler words must not count as evidence"
+    );
+}
+
+/// The structural score compares terms, not substrings.
+///
+/// Regression: `title.to_lowercase().contains(word)` scored "con" against
+/// "Conceptos" and "de" against any title containing those letters, so Spanish
+/// particles inflated the structural score of unrelated headings.
+#[test]
+fn test_structural_score_does_not_reward_substring_collisions() {
+    let doc = create_sample_design_pattern_doc();
+    let retriever = HybridRetriever::build(&[doc], None, None);
+
+    let hits = retriever
+        .search("strategy algorithms", 5)
+        .expect("the sample document covers this query");
+
+    for hit in &hits {
+        let title_words: Vec<String> = hit
+            .title
+            .to_lowercase()
+            .split_whitespace()
+            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+            .collect();
+        if hit.structural_score > 0.3 {
+            assert!(
+                title_words
+                    .iter()
+                    .any(|w| w == "strategy" || w == "algorithms"),
+                "title '{}' scored {} structurally without containing a query term",
+                hit.title,
+                hit.structural_score
+            );
+        }
+    }
 }

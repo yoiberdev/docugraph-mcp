@@ -10,12 +10,13 @@ use docugraph::benchmark::{
 use docugraph::document::model::Document;
 use docugraph::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, estimate_tokens};
 
-/// Helper to get test documents (either real indexed PDF or rich sample document).
+/// The bilingual synthetic manual these tests run against.
+///
+/// This used to try a copyrighted PDF at a hardcoded absolute path first and fall
+/// back to the sample document in silence when it was missing. That is the same
+/// antipattern these fixes remove from the server: on any machine but one, the
+/// suite quietly measured something other than what it claimed to.
 fn get_test_documents() -> Vec<Document> {
-    let real_pdf_path = "C:/proyectos/_template-agents/knowledge/design-patterns-es.pdf";
-    if let Ok(doc) = docugraph::document::load_pdf_from_path(real_pdf_path) {
-        return vec![doc];
-    }
     vec![create_benchmark_sample_document()]
 }
 
@@ -26,7 +27,9 @@ fn test_agent_code_analysis_recommends_strategy_with_compact_evidence() {
 
     // Agent query generated from inspecting a code snippet with carrier if/else branches
     let query = "Tengo una clase OrderProcessor con múltiples condicionales switch para calcular el envío según el transportista. ¿Qué patrón permite definir una familia de algoritmos y hacerlos intercambiables?";
-    let hits = retriever.search(query, 5);
+    let hits = retriever
+        .search(query, 5)
+        .expect("the bilingual sample manual covers this query");
 
     assert!(!hits.is_empty(), "Must find relevant pattern candidates");
 
@@ -73,7 +76,9 @@ fn test_agent_state_vs_strategy_comparison_evidence() {
     let retriever = HybridRetriever::build(&docs, None, None);
 
     let query = "Comparar la diferencia entre el patrón Strategy y el patrón State en cuanto a intención y cambio de comportamiento";
-    let hits = retriever.search(query, 5);
+    let hits = retriever
+        .search(query, 5)
+        .expect("the bilingual sample manual covers this query");
     assert!(!hits.is_empty());
 
     let budget = ContextBudget {
@@ -101,7 +106,9 @@ fn test_agent_observer_event_notification_retrieval() {
     let retriever = HybridRetriever::build(&docs, None, None);
 
     let query = "notificar a múltiples objetos suscriptores sobre eventos sin acoplar las clases";
-    let hits = retriever.search(query, 5);
+    let hits = retriever
+        .search(query, 5)
+        .expect("the bilingual sample manual covers this query");
     assert!(!hits.is_empty());
 
     let budget = ContextBudget {

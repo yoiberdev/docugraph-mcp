@@ -318,7 +318,9 @@ impl DocuGraphServer {
         };
 
         let retriever = HybridRetriever::build(&docs, None, Some(weights));
-        let hits = retriever.search(&params.0.query, limit);
+        // No evidence is an empty result list, matching document_search's shape.
+        // document_get_evidence is where an agent gets the reason in prose.
+        let hits = retriever.search(&params.0.query, limit).unwrap_or_default();
         Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
     }
 
@@ -371,10 +373,12 @@ impl DocuGraphServer {
         };
 
         let retriever = HybridRetriever::build(&docs, None, None);
-        let hits = retriever.search(query, budget.max_chunks * 2);
-        Ok(ContextBuilder::build_conceptual_context(
-            query, &hits, &docs, budget,
-        ))
+        match retriever.search(query, budget.max_chunks * 2) {
+            Ok(hits) => Ok(ContextBuilder::build_conceptual_context(
+                query, &hits, &docs, budget,
+            )),
+            Err(no_evidence) => Ok(no_evidence.to_markdown()),
+        }
     }
 
     /// Retrieve compact evidence snippets with guaranteed citation provenance for LLM reasoning.
@@ -396,9 +400,12 @@ impl DocuGraphServer {
         };
 
         let retriever = HybridRetriever::build(&docs, None, None);
-        let hits = retriever.search(query, budget.max_chunks * 2);
-        let bundle = ContextBuilder::build_evidence(query, &hits, budget);
-        Ok(bundle.to_markdown())
+        // "No evidence" is a valid answer, not a tool failure, so it is Ok with an
+        // explanation. An unresolvable document_id is an invalid argument and stays Err.
+        match retriever.search(query, budget.max_chunks * 2) {
+            Ok(hits) => Ok(ContextBuilder::build_evidence(query, &hits, budget).to_markdown()),
+            Err(no_evidence) => Ok(no_evidence.to_markdown()),
+        }
     }
 
     /// Read raw text from a specific page range with a character budget.

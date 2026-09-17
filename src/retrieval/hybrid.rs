@@ -41,6 +41,40 @@ pub struct HybridSearchHit {
     pub structural_score: f32,
 }
 
+/// Why a query produced no evidence, phrased so an agent can act on it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoEvidence {
+    pub query: String,
+    /// Query terms that appear nowhere in the corpus.
+    pub absent_terms: Vec<String>,
+    /// The most query information any single passage carried.
+    pub best_matched_idf: f32,
+    /// The information a passage needed to carry to count as evidence.
+    pub required_idf: f32,
+}
+
+impl NoEvidence {
+    /// Render the refusal as the agent-facing Markdown the retrieval tools emit,
+    /// mirroring `EvidenceBundle::to_markdown`.
+    pub fn to_markdown(&self) -> String {
+        let mut out = format!("### Sin evidencia para: '{}'\n\n", self.query);
+        out.push_str(
+            "Ningún pasaje del corpus contiene suficientes términos informativos de la consulta.\n",
+        );
+        if !self.absent_terms.is_empty() {
+            out.push_str(&format!(
+                "\nTérminos ausentes del corpus: {}.\n",
+                self.absent_terms.join(", ")
+            ));
+        }
+        out.push_str(
+            "\nSiguiente paso: usa `document_outline` para ver qué cubre el documento, \
+             o reformula la consulta con los términos que sí aparecen en él.\n",
+        );
+        out
+    }
+}
+
 /// Hybrid retrieval engine holding indices and vector caches.
 pub struct HybridRetriever {
     bm25: Bm25Index,
@@ -77,12 +111,48 @@ impl HybridRetriever {
     }
 
     /// Perform a hybrid search combining keyword matching, semantic vectors, and structural hierarchy.
-    pub fn search(&self, query: &str, limit: usize) -> Vec<HybridSearchHit> {
-        if self.bm25.units.is_empty() || query.trim().is_empty() {
-            return Vec::new();
+    ///
+    /// Admission and ranking are deliberately separate jobs. Admission ("is this
+    /// evidence at all?") is decided by lexical IDF coverage, the only absolute
+    /// signal here: the fused score is normalised per query, so its top hit scores
+    /// the same whether or not the corpus covers the question. Ranking ("of what
+    /// was admitted, what comes first?") is where the fused score belongs, and
+    /// where the semantic signal is a harmless tie-breaker.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<HybridSearchHit>, NoEvidence> {
+        let profile = self.bm25.profile_query(query);
+        if self.bm25.units.is_empty() || profile.is_empty() {
+            return Err(NoEvidence {
+                query: query.to_string(),
+                absent_terms: Vec::new(),
+                best_matched_idf: 0.0,
+                required_idf: 0.0,
+            });
         }
 
-        // 1. BM25 search candidates (take a wider candidate set for reranking)
+        // 1. Admission: keep only units carrying at least the mean information of
+        //    a query term. Candidates come from the postings, so this never scans
+        //    the whole corpus.
+        let floor = profile.admission_floor();
+        let matched = self.bm25.matched_idf(&profile);
+        let admitted: Vec<usize> = matched
+            .iter()
+            .filter_map(|(&idx, &mass)| (mass >= floor).then_some(idx))
+            .collect();
+
+        if admitted.is_empty() {
+            return Err(NoEvidence {
+                query: query.to_string(),
+                absent_terms: profile
+                    .absent_terms()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                best_matched_idf: matched.values().copied().fold(0.0, f32::max),
+                required_idf: floor,
+            });
+        }
+
+        // 2. BM25 search candidates (take a wider candidate set for reranking)
         let candidate_limit = (limit * 3).max(20).min(self.bm25.units.len());
         let bm25_hits = self.bm25.search(query, candidate_limit);
 
@@ -92,10 +162,10 @@ impl HybridRetriever {
             .fold(0.0f32, f32::max)
             .max(1e-5);
 
-        // 2. Query embedding
+        // 3. Query embedding
         let query_embedding = self.embedding_provider.embed(query).unwrap_or_default();
-        let query_lower = query.to_lowercase();
-        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+        let query_terms: std::collections::HashSet<&str> =
+            profile.terms.iter().map(|t| t.term.as_str()).collect();
 
         // Map BM25 scores by unit_id
         let bm25_map: std::collections::HashMap<&str, (f32, &SearchHit)> = bm25_hits
@@ -105,7 +175,8 @@ impl HybridRetriever {
 
         let mut scored_hits = Vec::new();
 
-        for (idx, unit) in self.bm25.units.iter().enumerate() {
+        for idx in admitted {
+            let unit = &self.bm25.units[idx];
             let bm25_raw = bm25_map
                 .get(unit.id.as_str())
                 .map(|(s, _)| *s)
@@ -120,21 +191,29 @@ impl HybridRetriever {
                 0.0
             };
 
-            // Structural score: title matches, section presence
+            // Structural score: title matches, section presence.
+            //
+            // Compared as terms, not substrings: `title.contains(word)` matched
+            // "con" inside "Conceptos", so any Spanish particle inflated the
+            // structural score of any title. Tokenizing both sides also drops the
+            // stop words the raw split kept.
             let mut structural_score = 0.0f32;
-            let title_lower = unit.title.to_lowercase();
-            let mut matches_in_title = 0;
-            for w in &query_words {
-                if title_lower.contains(w) {
-                    matches_in_title += 1;
-                }
+            let title_terms: std::collections::HashSet<String> =
+                crate::retrieval::bm25::tokenize(&unit.title)
+                    .into_iter()
+                    .collect();
+            let matches_in_title = query_terms
+                .iter()
+                .filter(|t| title_terms.contains(**t))
+                .count();
+
+            if !query_terms.is_empty() {
+                structural_score += (matches_in_title as f32 / query_terms.len() as f32) * 0.7;
             }
 
-            if !query_words.is_empty() {
-                structural_score += (matches_in_title as f32 / query_words.len() as f32) * 0.7;
-            }
-
-            // Bonus if unit is a dedicated section rather than a raw page
+            // Bonus if unit is a dedicated section rather than a raw page. This is
+            // a ranking prior only: admission already happened above, so it can no
+            // longer wave every section in the corpus past the filter.
             if unit.section_id.is_some() {
                 structural_score += 0.3;
             }
@@ -145,28 +224,29 @@ impl HybridRetriever {
                 + (self.weights.semantic_weight * semantic_score)
                 + (self.weights.structural_weight * normalized_struct);
 
-            // Include if there is any meaningful relevance
-            if final_score > 0.05 {
-                let snippet = if let Some((_, hit)) = bm25_map.get(unit.id.as_str()) {
-                    hit.snippet.clone()
-                } else {
-                    unit.text.chars().take(200).collect()
-                };
+            // No score threshold here: admission was decided lexically above, and
+            // a cut on the fused score cannot tell relevance from noise. Measured
+            // on a 437-page manual, an uncovered query scored 0.565 at the top
+            // while a covered one scored 0.557 — no line separates them.
+            let snippet = if let Some((_, hit)) = bm25_map.get(unit.id.as_str()) {
+                hit.snippet.clone()
+            } else {
+                unit.text.chars().take(200).collect()
+            };
 
-                scored_hits.push(HybridSearchHit {
-                    unit_id: unit.id.clone(),
-                    document_id: unit.document_id.clone(),
-                    title: unit.title.clone(),
-                    page_start: unit.page_start,
-                    page_end: unit.page_end,
-                    section_id: unit.section_id.clone(),
-                    snippet,
-                    final_score,
-                    bm25_score: bm25_raw,
-                    semantic_score,
-                    structural_score: normalized_struct,
-                });
-            }
+            scored_hits.push(HybridSearchHit {
+                unit_id: unit.id.clone(),
+                document_id: unit.document_id.clone(),
+                title: unit.title.clone(),
+                page_start: unit.page_start,
+                page_end: unit.page_end,
+                section_id: unit.section_id.clone(),
+                snippet,
+                final_score,
+                bm25_score: bm25_raw,
+                semantic_score,
+                structural_score: normalized_struct,
+            });
         }
 
         // Sort descending by final_score
@@ -176,6 +256,6 @@ impl HybridRetriever {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         scored_hits.truncate(limit);
-        scored_hits
+        Ok(scored_hits)
     }
 }
