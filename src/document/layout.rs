@@ -7,7 +7,7 @@
 
 use lopdf::content::Content;
 use lopdf::{Encoding, Object};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use tracing::{debug, trace};
 
 /// A 2D bounding box representing an area on a page in PDF user-space units (points).
@@ -154,13 +154,51 @@ pub fn estimate_fragment_width(text: &str, font_size: f32) -> f32 {
 }
 
 /// Extract positioned text fragments from a decoded PDF content stream.
+/// What a `Do` operator needs in order to follow a Form XObject.
+///
+/// Without this the operator is ignored, and every glyph inside the XObject is
+/// lost: a page whose body is one - which is what FrameMaker, InDesign, Word and
+/// most PDF/A normalizers produce for headers, callout boxes and sometimes the
+/// entire body - ingested as an empty page and was reported as one.
+pub struct XObjectScope<'a> {
+    pub doc: &'a lopdf::Document,
+    /// Resource dictionaries in scope, innermost last.
+    pub resources: Vec<&'a lopdf::Dictionary>,
+}
+
+/// How deeply Form XObjects may nest before we stop following them.
+const MAX_XOBJECT_DEPTH: usize = 4;
+
 pub fn extract_positioned_fragments(
     content: &Content,
     encodings: &BTreeMap<Vec<u8>, Encoding>,
 ) -> Vec<TextFragment> {
+    extract_fragments_within(content, encodings, None, Matrix2D::IDENTITY, 0)
+}
+
+/// Extract fragments, following Form XObjects through `scope` when one is given.
+pub fn extract_fragments_within<'a>(
+    content: &Content,
+    encodings: &BTreeMap<Vec<u8>, Encoding<'a>>,
+    scope: Option<&XObjectScope<'a>>,
+    base_ctm: Matrix2D,
+    depth: usize,
+) -> Vec<TextFragment> {
+    extract_fragments_skipping(content, encodings, scope, base_ctm, depth, &HashSet::new())
+}
+
+/// As above, but emitting nothing for fonts whose bytes cannot be decoded.
+pub fn extract_fragments_skipping<'a>(
+    content: &Content,
+    encodings: &BTreeMap<Vec<u8>, Encoding<'a>>,
+    scope: Option<&XObjectScope<'a>>,
+    base_ctm: Matrix2D,
+    depth: usize,
+    undecodable: &HashSet<Vec<u8>>,
+) -> Vec<TextFragment> {
     let mut fragments = Vec::new();
 
-    let mut ctm = Matrix2D::IDENTITY;
+    let mut ctm = base_ctm;
     let mut text_matrix = Matrix2D::IDENTITY;
     let mut line_matrix = Matrix2D::IDENTITY;
     let mut font_size: f32 = 12.0;
@@ -293,6 +331,12 @@ pub fn extract_positioned_fragments(
                 line_matrix = trans.multiply(&line_matrix);
                 text_matrix = line_matrix;
 
+                if current_font
+                    .as_ref()
+                    .is_some_and(|f| undecodable.contains(f))
+                {
+                    continue;
+                }
                 let enc = current_font.as_ref().and_then(|f| encodings.get(f));
                 if let Some(Object::String(bytes, _)) = op.operands.first() {
                     let text = decode_bytes_with_encoding(bytes, enc);
@@ -319,6 +363,12 @@ pub fn extract_positioned_fragments(
                 line_matrix = trans.multiply(&line_matrix);
                 text_matrix = line_matrix;
 
+                if current_font
+                    .as_ref()
+                    .is_some_and(|f| undecodable.contains(f))
+                {
+                    continue;
+                }
                 let enc = current_font.as_ref().and_then(|f| encodings.get(f));
                 if let Some(Object::String(bytes, _)) = op.operands.get(2) {
                     let text = decode_bytes_with_encoding(bytes, enc);
@@ -334,6 +384,12 @@ pub fn extract_positioned_fragments(
                 }
             }
             "Tj" => {
+                if current_font
+                    .as_ref()
+                    .is_some_and(|f| undecodable.contains(f))
+                {
+                    continue;
+                }
                 let enc = current_font.as_ref().and_then(|f| encodings.get(f));
                 if let Some(Object::String(bytes, _)) = op.operands.first() {
                     let text = decode_bytes_with_encoding(bytes, enc);
@@ -360,6 +416,12 @@ pub fn extract_positioned_fragments(
                 }
             }
             "TJ" => {
+                if current_font
+                    .as_ref()
+                    .is_some_and(|f| undecodable.contains(f))
+                {
+                    continue;
+                }
                 let enc = current_font.as_ref().and_then(|f| encodings.get(f));
                 if let Some(Object::Array(items)) = op.operands.first() {
                     let mut combined_text = String::new();
@@ -403,11 +465,223 @@ pub fn extract_positioned_fragments(
                     }
                 }
             }
+            // Draw an XObject. Only Form XObjects carry text; an image one has
+            // nothing to contribute here.
+            "Do" => {
+                if depth >= MAX_XOBJECT_DEPTH {
+                    continue;
+                }
+                let (Some(scope), Some(name)) =
+                    (scope, op.operands.first().and_then(|o| o.as_name().ok()))
+                else {
+                    continue;
+                };
+                let Some(stream) = find_form_xobject(scope, name) else {
+                    continue;
+                };
+
+                // The form's own /Matrix maps its space into the one that invoked
+                // it, so it composes onto the CTM in force at the `Do`.
+                let form_ctm = matrix_from(stream.dict.get(b"Matrix").ok())
+                    .unwrap_or(Matrix2D::IDENTITY)
+                    .multiply(&ctm);
+
+                let Ok(bytes) =
+                    stream.decompressed_content_with_limit(crate::document::MAX_DECOMPRESSED_BYTES)
+                else {
+                    continue;
+                };
+                let Ok(inner) = Content::decode(&bytes) else {
+                    continue;
+                };
+
+                // A form brings its own resources; anything it does not define it
+                // inherits from whoever drew it.
+                let mut inner_scope = XObjectScope {
+                    doc: scope.doc,
+                    resources: scope.resources.clone(),
+                };
+                if let Some(res) = resolve_dict(scope.doc, stream.dict.get(b"Resources").ok()) {
+                    inner_scope.resources.push(res);
+                }
+                let inner_encodings = fonts_in_scope(&inner_scope);
+
+                fragments.extend(extract_fragments_skipping(
+                    &inner,
+                    &inner_encodings,
+                    Some(&inner_scope),
+                    form_ctm,
+                    depth + 1,
+                    undecodable,
+                ));
+            }
             _ => {}
         }
     }
 
     fragments
+}
+
+/// The transform that undoes a page's `/Rotate`, so downstream geometry can treat
+/// every page as upright.
+///
+/// `/Rotate` is inheritable through `/Pages`, and is a multiple of 90 degrees.
+fn page_rotation_matrix(doc: &lopdf::Document, page_id: (u32, u16)) -> Matrix2D {
+    let degrees = inherited_rotation(doc, page_id)
+        .unwrap_or(0)
+        .rem_euclid(360);
+    match degrees {
+        90 => Matrix2D {
+            a: 0.0,
+            b: -1.0,
+            c: 1.0,
+            d: 0.0,
+            e: 0.0,
+            f: 0.0,
+        },
+        180 => Matrix2D {
+            a: -1.0,
+            b: 0.0,
+            c: 0.0,
+            d: -1.0,
+            e: 0.0,
+            f: 0.0,
+        },
+        270 => Matrix2D {
+            a: 0.0,
+            b: 1.0,
+            c: -1.0,
+            d: 0.0,
+            e: 0.0,
+            f: 0.0,
+        },
+        _ => Matrix2D::IDENTITY,
+    }
+}
+
+/// Read `/Rotate` from the page, walking up `/Parent` for an inherited one.
+fn inherited_rotation(doc: &lopdf::Document, page_id: (u32, u16)) -> Option<i64> {
+    let mut current = page_id;
+    for _ in 0..MAX_PAGE_TREE_DEPTH {
+        let dict = doc.get_dictionary(current).ok()?;
+        if let Ok(rotate) = dict.get(b"Rotate")
+            && let Ok(value) = rotate.as_i64()
+        {
+            return Some(value);
+        }
+        current = dict.get(b"Parent").ok()?.as_reference().ok()?;
+    }
+    None
+}
+
+/// How far up the page tree an inherited attribute is chased.
+const MAX_PAGE_TREE_DEPTH: usize = 32;
+
+/// Follow an object that may be a reference to a dictionary.
+fn resolve_dict<'a>(
+    doc: &'a lopdf::Document,
+    obj: Option<&'a Object>,
+) -> Option<&'a lopdf::Dictionary> {
+    match obj? {
+        Object::Dictionary(d) => Some(d),
+        Object::Reference(id) => doc.get_dictionary(*id).ok(),
+        _ => None,
+    }
+}
+
+/// Read a six-number PDF matrix.
+fn matrix_from(obj: Option<&Object>) -> Option<Matrix2D> {
+    let arr = obj?.as_array().ok()?;
+    if arr.len() < 6 {
+        return None;
+    }
+    let v: Vec<f32> = arr.iter().filter_map(|o| o.as_float().ok()).collect();
+    (v.len() >= 6).then(|| Matrix2D {
+        a: v[0],
+        b: v[1],
+        c: v[2],
+        d: v[3],
+        e: v[4],
+        f: v[5],
+    })
+}
+
+/// Find a Form XObject by name, innermost resources first.
+fn find_form_xobject<'a>(scope: &XObjectScope<'a>, name: &[u8]) -> Option<&'a lopdf::Stream> {
+    for resources in scope.resources.iter().rev() {
+        let Some(xobjects) = resolve_dict(scope.doc, resources.get(b"XObject").ok()) else {
+            continue;
+        };
+        let Ok(entry) = xobjects.get(name) else {
+            continue;
+        };
+        let stream = match entry {
+            Object::Reference(id) => scope
+                .doc
+                .get_object(*id)
+                .ok()
+                .and_then(|o| o.as_stream().ok()),
+            Object::Stream(st) => Some(st),
+            _ => None,
+        };
+        if let Some(st) = stream
+            && matches!(st.dict.get(b"Subtype"), Ok(Object::Name(sub)) if sub == b"Form")
+        {
+            return Some(st);
+        }
+    }
+    None
+}
+
+/// Font names whose bytes this code cannot turn into characters.
+///
+/// A `/Type0` font with no `/ToUnicode` CMap maps two-byte CIDs through a table
+/// that only the embedded font program defines. `lopdf` hands back a one-byte
+/// encoding for it, which walks that table over the high and low halves of each
+/// CID and drops the high one - so `SECURITY SETTINGS` is stored as
+/// `6(&85,7<6(77,1*6`. That is plausible ASCII: no replacement characters, no
+/// control bytes, so the page passes classification as digital text, the corpus
+/// and the index are poisoned with it, and a search for the words that are
+/// visibly on the page answers "absent from the corpus".
+///
+/// Refusing to emit it is the honest outcome. The page then has no text, which the
+/// existing page classification reports as scanned or empty with its OCR advisory,
+/// rather than the system claiming it read something it did not.
+fn undecodable_fonts(doc: &lopdf::Document, page_id: (u32, u16)) -> HashSet<Vec<u8>> {
+    let mut out = HashSet::new();
+    let Ok(fonts) = doc.get_page_fonts(page_id) else {
+        return out;
+    };
+    for (name, font) in fonts {
+        let is_type0 = matches!(font.get(b"Subtype"), Ok(Object::Name(s)) if s == b"Type0");
+        if is_type0 && font.get(b"ToUnicode").is_err() {
+            out.insert(name.to_vec());
+        }
+    }
+    out
+}
+
+/// Font encodings visible in this scope.
+///
+/// Rebuilt from the resource dictionaries rather than copied from the caller's
+/// map, because `lopdf::Encoding` is not `Clone`. `scope.resources` already holds
+/// the outer dictionaries, so a font the form inherits is still found - the form's
+/// own entries simply shadow them, which is the order the spec asks for.
+fn fonts_in_scope<'a>(scope: &XObjectScope<'a>) -> BTreeMap<Vec<u8>, Encoding<'a>> {
+    let mut out = BTreeMap::new();
+    for resources in &scope.resources {
+        let Some(fonts) = resolve_dict(scope.doc, resources.get(b"Font").ok()) else {
+            continue;
+        };
+        for (name, entry) in fonts.iter() {
+            if let Some(font) = resolve_dict(scope.doc, Some(entry))
+                && let Ok(enc) = font.get_font_encoding(scope.doc)
+            {
+                out.insert(name.to_vec(), enc);
+            }
+        }
+    }
+    out
 }
 
 /// GoF Strategy pattern: Strategy for determining reading order of text fragments on a page.
@@ -827,7 +1101,38 @@ pub fn extract_page_text_spatial(
         })
         .unwrap_or_default();
 
-    let fragments = extract_positioned_fragments(&content, &encodings);
+    // Seed the scope with the page's own resources so `Do` can resolve the Form
+    // XObjects drawn on it, and so a font a form inherits is still reachable.
+    let mut scope = XObjectScope {
+        doc,
+        resources: Vec::new(),
+    };
+    if let Ok((Some(res), _)) = doc.get_page_resources(page_id) {
+        scope.resources.push(res);
+    }
+
+    // /Rotate turns the page; without applying it the visual rows of a landscape
+    // table differ in x rather than y, so line grouping builds columns out of them
+    // and a parameter table ingests as interleaved nonsense.
+    let base_ctm = page_rotation_matrix(doc, page_id);
+
+    let undecodable = undecodable_fonts(doc, page_id);
+    if !undecodable.is_empty() {
+        debug!(
+            target: "layout",
+            fonts = undecodable.len(),
+            "Page uses Type0 fonts without /ToUnicode; their text is not decodable and is skipped"
+        );
+    }
+
+    let fragments = extract_fragments_skipping(
+        &content,
+        &encodings,
+        Some(&scope),
+        base_ctm,
+        0,
+        &undecodable,
+    );
     if fragments.is_empty() {
         return None;
     }
