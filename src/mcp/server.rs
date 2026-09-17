@@ -11,7 +11,7 @@ use tracing::info;
 use super::tools::*;
 use crate::document::model::{Document, PageKind, SectionNode};
 use crate::multimodal::CachedPageRendererProxy;
-use crate::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, HybridWeights};
+use crate::retrieval::{ContextBudget, ContextBuilder, HybridWeights, RetrieverCache};
 use crate::storage::{DiskCache, DocumentStore};
 
 /// DocuGraph MCP server holding the tool router and shared document store.
@@ -20,6 +20,7 @@ pub struct DocuGraphServer {
     tool_router: ToolRouter<Self>,
     store: DocumentStore,
     renderer: CachedPageRendererProxy,
+    retrievers: RetrieverCache,
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -52,6 +53,7 @@ impl DocuGraphServer {
             tool_router: Self::tool_router(),
             store: DocumentStore::new(cache),
             renderer,
+            retrievers: RetrieverCache::default(),
         }
     }
 
@@ -62,6 +64,7 @@ impl DocuGraphServer {
             tool_router: Self::tool_router(),
             store,
             renderer,
+            retrievers: RetrieverCache::default(),
         }
     }
 
@@ -74,6 +77,7 @@ impl DocuGraphServer {
             tool_router: Self::tool_router(),
             store,
             renderer,
+            retrievers: RetrieverCache::default(),
         }
     }
 
@@ -280,8 +284,9 @@ impl DocuGraphServer {
         let limit = params.0.limit.unwrap_or(5);
         let docs = self.resolve_scope(params.0.document_id.as_deref())?;
 
-        let bm25 = crate::retrieval::Bm25Index::build_from_documents(&docs, None);
-        let hits = bm25.search(&params.0.query, limit);
+        // Reuses the cached hybrid index rather than building a second lexical one.
+        let retriever = self.retrievers.get_or_build(&docs);
+        let hits = retriever.bm25().search(&params.0.query, limit);
         Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
     }
 
@@ -303,10 +308,12 @@ impl DocuGraphServer {
             structural_weight: params.0.structural_weight.unwrap_or(0.20),
         };
 
-        let retriever = HybridRetriever::build(&docs, None, Some(weights));
+        let retriever = self.retrievers.get_or_build(&docs);
         // No evidence is an empty result list, matching document_search's shape.
         // document_get_evidence is where an agent gets the reason in prose.
-        let hits = retriever.search(&params.0.query, limit).unwrap_or_default();
+        let hits = retriever
+            .search(&params.0.query, limit, &weights)
+            .unwrap_or_default();
         Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
     }
 
@@ -356,8 +363,8 @@ impl DocuGraphServer {
             compact: true,
         };
 
-        let retriever = HybridRetriever::build(&docs, None, None);
-        match retriever.search(query, budget.max_chunks * 2) {
+        let retriever = self.retrievers.get_or_build(&docs);
+        match retriever.search(query, budget.max_chunks * 2, &HybridWeights::DEFAULT) {
             Ok(hits) => Ok(ContextBuilder::build_conceptual_context(
                 query, &hits, &docs, budget,
             )),
@@ -383,10 +390,10 @@ impl DocuGraphServer {
             compact: true,
         };
 
-        let retriever = HybridRetriever::build(&docs, None, None);
+        let retriever = self.retrievers.get_or_build(&docs);
         // "No evidence" is a valid answer, not a tool failure, so it is Ok with an
         // explanation. An unresolvable document_id is an invalid argument and stays Err.
-        match retriever.search(query, budget.max_chunks * 2) {
+        match retriever.search(query, budget.max_chunks * 2, &HybridWeights::DEFAULT) {
             Ok(hits) => Ok(ContextBuilder::build_evidence(query, &hits, budget).to_markdown()),
             Err(no_evidence) => Ok(no_evidence.to_markdown()),
         }

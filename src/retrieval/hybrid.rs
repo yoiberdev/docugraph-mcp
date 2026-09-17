@@ -15,13 +15,17 @@ pub struct HybridWeights {
     pub structural_weight: f32,
 }
 
+impl HybridWeights {
+    pub const DEFAULT: Self = Self {
+        bm25_weight: 0.50,
+        semantic_weight: 0.30,
+        structural_weight: 0.20,
+    };
+}
+
 impl Default for HybridWeights {
     fn default() -> Self {
-        Self {
-            bm25_weight: 0.50,
-            semantic_weight: 0.30,
-            structural_weight: 0.20,
-        }
+        Self::DEFAULT
     }
 }
 
@@ -77,24 +81,23 @@ impl NoEvidence {
 }
 
 /// Hybrid retrieval engine holding indices and vector caches.
+///
+/// The weights are not part of this: an index is a function of the documents it
+/// was built from, while the fusion policy is a property of the question being
+/// asked. Keeping them apart is what lets one built index serve queries with
+/// different weights, and what lets `RetrieverCache` key on the corpus alone.
 pub struct HybridRetriever {
     bm25: Bm25Index,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     unit_embeddings: Vec<Vec<f32>>,
-    weights: HybridWeights,
 }
 
 impl HybridRetriever {
     /// Build a hybrid retriever from documents with the specified or default embedding provider.
-    pub fn build(
-        docs: &[Document],
-        provider: Option<Arc<dyn EmbeddingProvider>>,
-        weights: Option<HybridWeights>,
-    ) -> Self {
+    pub fn build(docs: &[Document], provider: Option<Arc<dyn EmbeddingProvider>>) -> Self {
         let bm25 = Bm25Index::build_from_documents(docs, None);
         let provider =
             provider.unwrap_or_else(|| Arc::new(DeterministicSubwordEmbedding::default()));
-        let weights = weights.unwrap_or_default();
 
         // Precompute embeddings for search units
         let mut unit_embeddings = Vec::with_capacity(bm25.units.len());
@@ -107,8 +110,13 @@ impl HybridRetriever {
             bm25,
             embedding_provider: provider,
             unit_embeddings,
-            weights,
         }
+    }
+
+    /// The lexical index behind this retriever, so a keyword-only search can
+    /// reuse it instead of building a second one.
+    pub fn bm25(&self) -> &Bm25Index {
+        &self.bm25
     }
 
     /// Perform a hybrid search combining keyword matching, semantic vectors, and structural hierarchy.
@@ -119,7 +127,12 @@ impl HybridRetriever {
     /// the same whether or not the corpus covers the question. Ranking ("of what
     /// was admitted, what comes first?") is where the fused score belongs, and
     /// where the semantic signal is a harmless tie-breaker.
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<HybridSearchHit>, NoEvidence> {
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        weights: &HybridWeights,
+    ) -> Result<Vec<HybridSearchHit>, NoEvidence> {
         let profile = self.bm25.profile_query(query);
         if self.bm25.units.is_empty() || profile.is_empty() {
             return Err(NoEvidence {
@@ -221,9 +234,9 @@ impl HybridRetriever {
             let normalized_struct = structural_score.clamp(0.0, 1.0);
 
             // Compute weighted final score
-            let final_score = (self.weights.bm25_weight * normalized_bm25)
-                + (self.weights.semantic_weight * semantic_score)
-                + (self.weights.structural_weight * normalized_struct);
+            let final_score = (weights.bm25_weight * normalized_bm25)
+                + (weights.semantic_weight * semantic_score)
+                + (weights.structural_weight * normalized_struct);
 
             // No score threshold here: admission was decided lexically above, and
             // a cut on the fused score cannot tell relevance from noise. Measured

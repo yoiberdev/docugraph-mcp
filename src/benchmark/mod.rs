@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::document::model::Document;
-use crate::retrieval::{ContextBudget, ContextBuilder, HybridRetriever, estimate_tokens};
+use crate::retrieval::{
+    ContextBudget, ContextBuilder, HybridRetriever, HybridWeights, estimate_tokens,
+};
 
 /// A single benchmark question specification with expected concept keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,7 +281,7 @@ impl BenchmarkRunner {
             .max(1);
 
         // Pre-build retriever
-        let retriever = HybridRetriever::build(documents, None, None);
+        let retriever = HybridRetriever::build(documents, None);
 
         let mut query_results = Vec::with_capacity(questions.len());
         let mut total_reduction = 0.0_f32;
@@ -293,7 +295,7 @@ impl BenchmarkRunner {
             // 1. Search candidate chunks. A question the corpus cannot answer
             //    yields no hits and is scored as the miss it is.
             let hits = retriever
-                .search(&q.query, budget.max_chunks * 2)
+                .search(&q.query, budget.max_chunks * 2, &HybridWeights::DEFAULT)
                 .unwrap_or_default();
 
             // 2. Format context according to target tool

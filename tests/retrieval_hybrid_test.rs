@@ -2,7 +2,7 @@ use docugraph::document::model::{Document, DocumentMetadata, Page, SectionNode};
 use docugraph::knowledge::design_patterns::DesignPatternsAdapter;
 use docugraph::retrieval::{
     Bm25Index, ContextBudget, ContextBuilder, DeterministicSubwordEmbedding, EmbeddingProvider,
-    HybridRetriever,
+    HybridRetriever, HybridWeights,
 };
 
 fn create_sample_design_pattern_doc() -> Document {
@@ -151,10 +151,14 @@ fn test_embedding_and_cosine_similarity() {
 #[test]
 fn test_hybrid_search_scoring() {
     let doc = create_sample_design_pattern_doc();
-    let retriever = HybridRetriever::build(&[doc], None, None);
+    let retriever = HybridRetriever::build(&[doc], None);
 
     let hits = retriever
-        .search("encapsulate interchangeable algorithms", 3)
+        .search(
+            "encapsulate interchangeable algorithms",
+            3,
+            &HybridWeights::DEFAULT,
+        )
         .expect("the sample document covers this query");
     assert!(!hits.is_empty());
     assert!(hits[0].final_score > 0.3);
@@ -166,9 +170,9 @@ fn test_hybrid_search_scoring() {
 #[test]
 fn test_context_budgeter_and_evidence() {
     let doc = create_sample_design_pattern_doc();
-    let retriever = HybridRetriever::build(&[doc], None, None);
+    let retriever = HybridRetriever::build(&[doc], None);
     let hits = retriever
-        .search("interchangeable algorithms", 5)
+        .search("interchangeable algorithms", 5, &HybridWeights::DEFAULT)
         .expect("the sample document covers this query");
 
     let budget = ContextBudget {
@@ -215,10 +219,14 @@ fn test_design_patterns_dynamic_adapter() {
 #[test]
 fn test_uncovered_query_yields_no_evidence_instead_of_cited_noise() {
     let doc = create_sample_design_pattern_doc();
-    let retriever = HybridRetriever::build(&[doc], None, None);
+    let retriever = HybridRetriever::build(&[doc], None);
 
     let err = retriever
-        .search("receta de paella valenciana con azafrán y garrofón", 5)
+        .search(
+            "receta de paella valenciana con azafrán y garrofón",
+            5,
+            &HybridWeights::DEFAULT,
+        )
         .expect_err("a cookery question must not retrieve from a design patterns book");
 
     assert!(
@@ -246,11 +254,12 @@ fn test_uncovered_query_yields_no_evidence_instead_of_cited_noise() {
 #[test]
 fn test_partially_matching_query_is_refused_when_key_terms_are_absent() {
     let doc = create_sample_design_pattern_doc();
-    let retriever = HybridRetriever::build(&[doc], None, None);
+    let retriever = HybridRetriever::build(&[doc], None);
 
     let result = retriever.search(
         "how to implement memoization with Rust procedural macros",
         5,
+        &HybridWeights::DEFAULT,
     );
     assert!(
         result.is_err(),
@@ -266,10 +275,10 @@ fn test_partially_matching_query_is_refused_when_key_terms_are_absent() {
 #[test]
 fn test_structural_score_does_not_reward_substring_collisions() {
     let doc = create_sample_design_pattern_doc();
-    let retriever = HybridRetriever::build(&[doc], None, None);
+    let retriever = HybridRetriever::build(&[doc], None);
 
     let hits = retriever
-        .search("strategy algorithms", 5)
+        .search("strategy algorithms", 5, &HybridWeights::DEFAULT)
         .expect("the sample document covers this query");
 
     for hit in &hits {
@@ -290,4 +299,68 @@ fn test_structural_score_does_not_reward_substring_collisions() {
             );
         }
     }
+}
+
+/// The same corpus must return the very same index, not an equal one.
+///
+/// Building it costs ~537 ms against ~0.5 ms to search it, measured on a
+/// 437-page manual, and it was being rebuilt once per MCP tool call.
+#[test]
+fn test_retriever_cache_returns_the_same_index_for_the_same_corpus() {
+    use docugraph::retrieval::RetrieverCache;
+    use std::sync::Arc;
+
+    let docs = vec![create_sample_design_pattern_doc()];
+    let cache = RetrieverCache::default();
+
+    let first = cache.get_or_build(&docs);
+    let second = cache.get_or_build(&docs);
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "the second call must reuse the built index, not rebuild it"
+    );
+}
+
+/// A different corpus is a different key: reindexed content must not be served
+/// from the entry built for the old content.
+#[test]
+fn test_retriever_cache_misses_when_the_content_changes() {
+    use docugraph::retrieval::{CorpusSignature, RetrieverCache};
+    use std::sync::Arc;
+
+    let docs = vec![create_sample_design_pattern_doc()];
+
+    let mut edited = create_sample_design_pattern_doc();
+    edited.metadata.content_hash = "a-different-content-hash".to_string();
+    let edited = vec![edited];
+
+    assert_ne!(
+        CorpusSignature::of(&docs),
+        CorpusSignature::of(&edited),
+        "a new content hash must produce a new signature"
+    );
+
+    let cache = RetrieverCache::default();
+    let first = cache.get_or_build(&docs);
+    let after_edit = cache.get_or_build(&edited);
+    assert!(
+        !Arc::ptr_eq(&first, &after_edit),
+        "edited content must not be served from the stale entry"
+    );
+}
+
+/// The signature is a set, not a list: ordering the same documents differently
+/// must not force a rebuild.
+#[test]
+fn test_corpus_signature_is_order_independent() {
+    use docugraph::retrieval::CorpusSignature;
+
+    let a = create_sample_design_pattern_doc();
+    let mut b = create_sample_design_pattern_doc();
+    b.metadata.id = "second-doc".to_string();
+    b.metadata.content_hash = "second-hash".to_string();
+
+    let forward = CorpusSignature::of(&[a.clone(), b.clone()]);
+    let backward = CorpusSignature::of(&[b, a]);
+    assert_eq!(forward, backward);
 }

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use docugraph::retrieval::HybridRetriever;
+use docugraph::retrieval::{HybridRetriever, HybridWeights};
 use docugraph::storage::{DiskCache, DocumentStore};
 use rmcp::ServiceExt;
 use tracing::info;
@@ -359,8 +359,8 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let retriever = HybridRetriever::build(&docs, None, None);
-            let hits = match retriever.search(&query, limit) {
+            let retriever = HybridRetriever::build(&docs, None);
+            let hits = match retriever.search(&query, limit, &HybridWeights::DEFAULT) {
                 Ok(hits) => hits,
                 Err(no_evidence) => {
                     eprintln!("No matches found for query: '{}'", query);
