@@ -32,7 +32,11 @@ nowhere in `src/`.
 - **Benchmark Engine:** `BudgetStrategy` variants (aggressive, balanced, exhaustive), an observer-based runner and a bilingual synthetic corpus.
 - **MCP Tools Suite (15 tools):** `document_ping`, `document_list`, `document_info`, `document_outline`, `document_search`, `document_search_hybrid`, `document_get_section`, `document_get_context`, `document_get_evidence`, `document_read_pages`, `document_render_page`, `document_get_links`, `document_get_forms`, `document_get_attachments`, `document_read_attachment`.
 - **CLI Commands:** `docugraph serve`, `index`, `list`, `info`, `search`, `render`, `bench`, `links`, `forms`, `attachments`.
-- **Automated Testing & CI:** 85 integration tests passing, `clippy -D warnings` and `cargo fmt --check` gates, and a GitHub Actions CI workflow.
+- **Automated Testing & CI:** 90 integration tests passing, `clippy -D warnings` and `cargo fmt --check` gates, and a GitHub Actions CI workflow.
+
+### Changed
+- **Retrieval indices are cached by corpus signature.** Every scoped tool call used to rebuild the BM25 index and re-embed every search unit before searching: 537 ms to build against 0.46 ms to search, on a 437-page manual. `document_get_evidence` now answers in 3.08 ms warm against 499.81 ms before, with identical output. `HybridWeights` moved out of `HybridRetriever` and into `search()`, because the index belongs to the corpus while the fusion policy belongs to the question.
+- **`Cargo.lock` is committed** and the rmcp requirement is `3.4`, the version the code actually needs.
 
 ### Fixed
 - **Unresolvable `document_id` no longer widens the search to the whole corpus.** `document_search`, `document_search_hybrid`, `document_get_context` and `document_get_evidence` fell back to every indexed document when an explicit id failed to resolve, so a typo returned confidently-cited passages from a different document. They now return an error naming the available ids. A blank id still means "no filter".
@@ -41,3 +45,7 @@ nowhere in `src/`.
 - **The structural score compares terms instead of substrings.** `title.contains(word)` matched "con" inside "Conceptos", so any Spanish particle inflated the structural score of any title.
 - **The benchmark fixture covers the questions the committed dataset actually asks.** `evaluation/questions.json` is bilingual, but Observer, Decorator and the Open/Closed Principle were only asked in Spanish and the fixture was English-only. The test helper also no longer falls back in silence to that fixture when a hardcoded absolute PDF path is missing.
 - **`rmcp::model::ServerInfo` replaced with `ServerConfig`.** The deprecated alias failed the `clippy -D warnings` CI gate.
+- **A missing document is reported as a tool error on every scoped tool.** `document_get_links`, `document_get_forms` and `document_get_attachments` returned success with an `{"error": ...}` body, `document_outline` returned success with an error sentence where a JSON array was expected, and `document_info` returned a structurally valid result with `total_pages: 0` — which reads as an empty document rather than a missing one. `document_render_page` and `document_read_attachment` also stop packing JSON into the error string. `document_get_context` and `document_get_evidence` still answer "no evidence" as a success, because that is a valid answer rather than a failed call.
+- **A missing section points at `document_outline`**, the way a missing document points at `document_list`.
+- **`RUST_LOG` is honoured.** The subscriber pinned the level to `INFO` while `env-filter` was already enabled, so the variable did nothing — including in the client configuration this README recommends. `.env.example` also described five settings that no code read, and omitted `DOCUGRAPH_CACHE_DIR`, the one it does.
+- **Known limits of the admission rule are documented** on `QueryProfile::admission_floor`, in both directions: a query whose only in-corpus terms are generic verbs can slip through, and a query whose informative terms are in another language than the corpus is refused even when the topic is covered.
