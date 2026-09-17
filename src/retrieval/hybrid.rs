@@ -165,9 +165,12 @@ impl HybridRetriever {
             });
         }
 
-        // 2. BM25 search candidates (take a wider candidate set for reranking)
+        // 2. BM25 search candidates (take a wider candidate set for reranking).
+        //    Ranked against the profile's terms, not the raw string, so ranking
+        //    scores the same query admission judged.
         let candidate_limit = (limit * 3).max(20).min(self.bm25.units.len());
-        let bm25_hits = self.bm25.search(query, candidate_limit);
+        let profile_terms: Vec<String> = profile.terms.iter().map(|t| t.term.clone()).collect();
+        let bm25_hits = self.bm25.search_terms(&profile_terms, candidate_limit);
 
         let max_bm25 = bm25_hits
             .iter()

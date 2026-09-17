@@ -486,3 +486,142 @@ fn test_hybrid_search_is_deterministic_across_identical_calls() {
         assert_eq!(again, first, "call {call} returned a different ordering");
     }
 }
+
+/// Build a small Spanish manual that keeps the English pattern names, the way a
+/// real translated design-patterns book does.
+fn spanish_manual_with_english_names() -> Document {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "manual-es".to_string(),
+        title: "Patrones de diseño".to_string(),
+        total_pages: 4,
+        content_hash: "hash-manual-es".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    doc.add_page(Page::new(
+        1,
+        "Observer. El patrón Observer define una dependencia uno a muchos: cuando el emisor \
+         cambia de estado, los objetos que se subscribe reciben la notificación.",
+    ));
+    doc.add_page(Page::new(
+        2,
+        "Decorator. El patrón Decorator envuelve un objeto para añadir comportamiento sin herencia.",
+    ));
+    doc.add_page(Page::new(
+        3,
+        "Catalogo de patterns de comportamiento y su intención dentro del diseño orientado a objetos.",
+    ));
+    doc.add_page(Page::new(
+        4,
+        "Singleton. El patrón Singleton garantiza una unica instancia de la clase en el programa.",
+    ));
+    doc.sections
+        .push(SectionNode::new("obs", "Observer", 1, 1, 1, None));
+    doc
+}
+
+/// An English query about a topic the Spanish manual covers must not be refused
+/// just because the query used an inflected form of a word the manual has.
+///
+/// Regression: `observer` is in the corpus but `pattern` and `subscribers` are
+/// not - only `patterns` and `subscribe` are. The two absent forms took the
+/// maximum IDF and lifted the bar past anything `observer` alone could supply, so
+/// a covered question came back as "no evidence".
+#[test]
+fn test_inflected_query_terms_resolve_to_the_form_the_corpus_uses() {
+    let retriever = HybridRetriever::build(&[spanish_manual_with_english_names()], None);
+
+    let profile = retriever
+        .bm25()
+        .profile_query("Observer pattern subscribers");
+    let resolved: Vec<&str> = profile.terms.iter().map(|t| t.term.as_str()).collect();
+    assert!(
+        resolved.contains(&"patterns"),
+        "'pattern' must resolve to the corpus form 'patterns', got {resolved:?}"
+    );
+    assert!(
+        resolved.contains(&"subscribe"),
+        "'subscribers' must resolve to the corpus form 'subscribe', got {resolved:?}"
+    );
+    assert!(
+        profile.absent_terms().is_empty(),
+        "nothing should be reported absent here: {:?}",
+        profile.absent_terms()
+    );
+
+    let hits = retriever
+        .search("Observer pattern subscribers", 5, &HybridWeights::DEFAULT)
+        .expect("the manual covers Observer");
+    assert!(!hits.is_empty());
+}
+
+/// Resolution must never invent a match: a term with no form in the corpus stays
+/// absent, so genuinely uncovered questions are still refused.
+#[test]
+fn test_absent_topics_do_not_resolve_to_anything() {
+    let index = docugraph::retrieval::Bm25Index::build_from_documents(
+        &[spanish_manual_with_english_names()],
+        None,
+    );
+
+    for query in ["kubernetes ingress", "paella azafrán", "memoization macros"] {
+        let profile = index.profile_query(query);
+        assert_eq!(
+            profile.absent_terms().len(),
+            profile.terms.len(),
+            "'{query}' must stay entirely absent, got {:?}",
+            profile
+                .terms
+                .iter()
+                .map(|t| (&t.term, t.df))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Resolution must not reach a word that merely looks similar.
+///
+/// Regression: appending "es" turned the English "intent" into the Spanish verb
+/// form "intentes", which answered the query through a word that has nothing to
+/// do with it. Refusing is the honest outcome for a true translation.
+#[test]
+fn test_resolution_does_not_reach_an_unrelated_lookalike() {
+    let mut doc = spanish_manual_with_english_names();
+    doc.add_page(Page::new(
+        5,
+        "No intentes resolver el problema antes de comprenderlo por completo.",
+    ));
+    doc.metadata.total_pages = 5;
+
+    let index = docugraph::retrieval::Bm25Index::build_from_documents(&[doc], None);
+    let profile = index.profile_query("Strategy intent");
+    let resolved: Vec<&str> = profile.terms.iter().map(|t| t.term.as_str()).collect();
+
+    assert!(
+        !resolved.contains(&"intentes"),
+        "'intent' must not resolve to the unrelated verb form, got {resolved:?}"
+    );
+    assert!(
+        profile.absent_terms().contains(&"intent"),
+        "'intent' has no form in this corpus and must stay absent, got {resolved:?}"
+    );
+}
+
+/// Ranking must score the same terms admission judged.
+#[test]
+fn test_ranking_uses_the_resolved_terms() {
+    let index = docugraph::retrieval::Bm25Index::build_from_documents(
+        &[spanish_manual_with_english_names()],
+        None,
+    );
+
+    // "pattern" alone finds nothing: the corpus spells it "patterns".
+    assert!(index.search("pattern", 5).is_empty());
+
+    let profile = index.profile_query("pattern");
+    let terms: Vec<String> = profile.terms.iter().map(|t| t.term.clone()).collect();
+    assert!(
+        !index.search_terms(&terms, 5).is_empty(),
+        "ranking against the resolved terms must find the passage admission accepted"
+    );
+}
