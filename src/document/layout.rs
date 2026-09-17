@@ -369,15 +369,12 @@ pub fn extract_positioned_fragments(
                                 let part = decode_bytes_with_encoding(bytes, enc);
                                 combined_text.push_str(&part);
                             }
-                            Object::Integer(i) if *i < -50 => {
-                                if !combined_text.ends_with(' ') {
-                                    combined_text.push(' ');
-                                }
+                            // A large negative kerning adjustment is a word break.
+                            Object::Integer(i) if *i < -50 && !combined_text.ends_with(' ') => {
+                                combined_text.push(' ');
                             }
-                            Object::Real(r) if *r < -50.0 => {
-                                if !combined_text.ends_with(' ') {
-                                    combined_text.push(' ');
-                                }
+                            Object::Real(r) if *r < -50.0 && !combined_text.ends_with(' ') => {
+                                combined_text.push(' ');
                             }
                             _ => {}
                         }

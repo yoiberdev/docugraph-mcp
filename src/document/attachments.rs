@@ -158,7 +158,8 @@ fn traverse_name_tree(
         };
 
         if let Some(arr) = names_arr {
-            for chunk in arr.chunks_exact(2) {
+            // The name tree stores alternating (name, filespec) entries.
+            for chunk in arr.as_chunks::<2>().0 {
                 let name_hint = object_to_string(&chunk[0]);
                 let filespec_obj = &chunk[1];
                 if let Some(att) =
