@@ -2,6 +2,8 @@
 name = "docugraph"
 version = "0.1.0"
 edition = "2024"
+# let-chains and `slice::as_chunks` are both 1.88; edition 2024 alone would be 1.85.
+rust-version = "1.88"
 description = "Universal Document Knowledge Graph MCP Server for AI Agents"
 readme = "README.md"
 license = "MIT"

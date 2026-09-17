@@ -69,8 +69,26 @@ flowchart TD
 
 ## 🚀 Instalación y Quickstart
 
-### Prerrequisitos
-* Rust (Edición 2024 / versión 1.85+ recomendada).
+### Descarga directa (recomendado)
+
+Baja el binario de tu plataforma desde la [última release](https://github.com/yoiberdev/docugraph-mcp/releases/latest)
+—Windows, Linux y macOS, en x86_64 y arm64—, descomprímelo y ya está: es un
+ejecutable autocontenido, sin runtime ni dependencias que instalar.
+
+```bash
+docugraph --version
+```
+
+Cada asset lleva su `.sha256` al lado por si quieres verificarlo.
+
+### Con cargo
+
+```bash
+cargo install --git https://github.com/yoiberdev/docugraph-mcp
+```
+
+### Prerrequisitos para compilar desde el código
+* Rust 1.88 o superior (edición 2024, let-chains y `slice::as_chunks`).
 
 ### Compilación local
 ```bash

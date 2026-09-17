@@ -1,0 +1,128 @@
+name: Release
+
+# Tagging is what publishes. `docs/git-workflow.md` asks for an annotated tag per
+# completed phase, and until now nothing acted on one: there was no way to install
+# DocuGraph except cloning it and building it, which is most of the reason nobody
+# has.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach binaries to"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: docugraph.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: docugraph
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            binary: docugraph
+          - target: x86_64-apple-darwin
+            os: macos-13
+            binary: docugraph
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            binary: docugraph
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # A binary that cannot answer `--version` is not worth publishing, and this
+      # catches a cross-compiled artifact that will not run on its own host.
+      - name: Smoke test the binary
+        if: matrix.target != 'aarch64-apple-darwin' || runner.arch == 'ARM64'
+        run: target/${{ matrix.target }}/release/${{ matrix.binary }} --version
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging="docugraph-${{ matrix.target }}"
+          mkdir -p "$staging"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "$staging/"
+          cp README.md LICENSE CHANGELOG.md "$staging/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$staging.zip" "$staging"
+            echo "ASSET=$staging.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$staging.tar.gz" "$staging"
+            echo "ASSET=$staging.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$ASSET" > "$ASSET.sha256"
+          else
+            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docugraph-${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every platform's artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Attach to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
