@@ -373,17 +373,16 @@ impl Bm25Index {
         self.search_terms(&tokenize(query), limit)
     }
 
-    /// Rank against an already-resolved term set.
+    /// BM25 score for every unit carrying any of these terms.
     ///
-    /// The hybrid path passes the terms from its `QueryProfile` so that ranking
-    /// scores the same query admission judged. Re-tokenizing the raw string here
-    /// would drop any term `profile_query` resolved to the form the corpus uses.
-    pub fn search_terms(&self, query_terms: &[String], limit: usize) -> Vec<SearchHit> {
-        if query_terms.is_empty() || self.total_docs == 0 {
-            return Vec::new();
-        }
-
+    /// Separate from ranking because scoring is cheap and snippet extraction is
+    /// not: a caller that needs scores for a wide candidate set but snippets for
+    /// only the few it returns should not pay for the ones it discards.
+    pub fn score_terms(&self, query_terms: &[String]) -> HashMap<usize, f32> {
         let mut scores: HashMap<usize, f32> = HashMap::new();
+        if query_terms.is_empty() || self.total_docs == 0 {
+            return scores;
+        }
 
         for term in query_terms {
             if let Some(postings) = self.inverted_index.get(term) {
@@ -401,7 +400,23 @@ impl Bm25Index {
                 }
             }
         }
+        scores
+    }
 
+    /// The quotable window from a unit, and the page it is on.
+    pub fn snippet_for(&self, unit_idx: usize, query_terms: &[String]) -> (String, u32) {
+        let unit = &self.units[unit_idx];
+        let (snippet, offset) = extract_snippet(&unit.text, query_terms, 250);
+        (snippet, unit.page_at(offset))
+    }
+
+    /// Rank against an already-resolved term set.
+    ///
+    /// The hybrid path passes the terms from its `QueryProfile` so that ranking
+    /// scores the same query admission judged. Re-tokenizing the raw string here
+    /// would drop any term `profile_query` resolved to the form the corpus uses.
+    pub fn search_terms(&self, query_terms: &[String], limit: usize) -> Vec<SearchHit> {
+        let scores = self.score_terms(query_terms);
         let mut ranked: Vec<(usize, f32)> = scores.into_iter().collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -410,7 +425,7 @@ impl Bm25Index {
             .take(limit)
             .map(|(idx, score)| {
                 let unit = &self.units[idx];
-                let (snippet, snippet_offset) = extract_snippet(&unit.text, query_terms, 250);
+                let (snippet, snippet_page) = self.snippet_for(idx, query_terms);
                 SearchHit {
                     unit_id: unit.id.clone(),
                     document_id: unit.document_id.clone(),
@@ -419,7 +434,7 @@ impl Bm25Index {
                     page_end: unit.page_end,
                     section_id: unit.section_id.clone(),
                     snippet,
-                    snippet_page: unit.page_at(snippet_offset),
+                    snippet_page,
                     score,
                 }
             })

@@ -733,3 +733,102 @@ fn test_page_units_cite_their_own_page() {
     assert_eq!(page_hit.snippet_page, page_hit.page_start);
     assert_eq!(page_hit.snippet_page, 3);
 }
+
+/// Asking for fewer results must return a prefix of asking for more.
+///
+/// Regression: BM25 was scored only over a window of `(limit * 3).max(20)`
+/// candidates, so an admitted unit outside it took `bm25_score = 0.0` and was
+/// ranked on a character n-gram hash plus a constant. The top 5 came back as a
+/// different ordering of the top 20 rather than its prefix, and the `bm25_score`
+/// returned for explainability was false for those hits.
+#[test]
+fn test_smaller_limits_return_a_prefix_of_larger_ones() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "wide".to_string(),
+        title: "Wide".to_string(),
+        total_pages: 60,
+        content_hash: "hash-wide".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    // Enough pages mentioning the term that the admitted set exceeds any window.
+    for page in 1..=60u32 {
+        doc.add_page(Page::new(
+            page,
+            format!(
+                "Pagina {page}. El procedimiento de calibracion del sensor se describe \
+                 con detalle. Repeticion {page} del termino calibracion."
+            ),
+        ));
+    }
+    doc.sections.push(SectionNode::new(
+        "todo",
+        "Procedimiento de calibracion",
+        1,
+        1,
+        60,
+        None,
+    ));
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    let ids = |n: usize| -> Vec<String> {
+        retriever
+            .search(
+                "procedimiento calibracion sensor",
+                n,
+                &HybridWeights::DEFAULT,
+            )
+            .expect("the corpus covers this")
+            .iter()
+            .map(|h| h.unit_id.clone())
+            .collect()
+    };
+
+    let wide = ids(40);
+    for narrow_limit in [1, 3, 5, 10, 20] {
+        let narrow = ids(narrow_limit);
+        assert!(
+            wide.len() >= narrow.len() && wide[..narrow.len()] == narrow[..],
+            "limit={narrow_limit} returned {narrow:?}, which is not a prefix of limit=40"
+        );
+    }
+}
+
+/// Every returned hit reports the BM25 score it was actually ranked with.
+#[test]
+fn test_reported_bm25_score_is_real() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "scores".to_string(),
+        title: "Scores".to_string(),
+        total_pages: 40,
+        content_hash: "hash-scores".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    for page in 1..=40u32 {
+        doc.add_page(Page::new(
+            page,
+            format!("Pagina {page} sobre el procedimiento de calibracion del sensor."),
+        ));
+    }
+    doc.sections
+        .push(SectionNode::new("s", "Calibracion", 1, 1, 40, None));
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    let hits = retriever
+        .search("procedimiento calibracion", 30, &HybridWeights::DEFAULT)
+        .expect("the corpus covers this");
+
+    assert!(
+        hits.len() > 20,
+        "the admitted set must exceed the old window"
+    );
+    for hit in &hits {
+        assert!(
+            hit.bm25_score > 0.0,
+            "'{}' matched the query but reports bm25_score {}",
+            hit.unit_id,
+            hit.bm25_score
+        );
+    }
+}

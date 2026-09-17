@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::bm25::{Bm25Index, SearchHit};
+use super::bm25::Bm25Index;
 use super::embedding::{DeterministicSubwordEmbedding, EmbeddingProvider, cosine_similarity};
 use crate::document::model::Document;
 
@@ -43,6 +43,10 @@ pub struct HybridSearchHit {
     /// name. `page_start` is where the unit begins, and for a multi-page section
     /// those are rarely the same page.
     pub snippet_page: u32,
+    /// Index of this unit in the underlying index, so the snippet can be taken
+    /// after ranking rather than for every candidate.
+    #[serde(skip)]
+    pub unit_index: usize,
     pub final_score: f32,
     pub bm25_score: f32,
     pub semantic_score: f32,
@@ -169,16 +173,26 @@ impl HybridRetriever {
             });
         }
 
-        // 2. BM25 search candidates (take a wider candidate set for reranking).
-        //    Ranked against the profile's terms, not the raw string, so ranking
-        //    scores the same query admission judged.
-        let candidate_limit = (limit * 3).max(20).min(self.bm25.units.len());
+        // 2. Score every unit that matched a query term, not a window of them.
+        //
+        //    The window used to be (limit * 3).max(20), so an admitted unit outside
+        //    it took bm25 = 0.0 and was then ranked on a character n-gram hash plus
+        //    a constant. That made the result depend on how many results were asked
+        //    for: the top 5 came back as a different ordering of the top 20 rather
+        //    than its prefix, which no sane API does, and the bm25_score reported
+        //    for explainability was simply false for those hits.
+        //
+        //    `matched` is the units carrying any of the query's IDF, built from the
+        //    postings, so it is bounded by the query rather than the corpus and
+        //    every admitted unit is in it by construction.
         let profile_terms: Vec<String> = profile.terms.iter().map(|t| t.term.clone()).collect();
-        let bm25_hits = self.bm25.search_terms(&profile_terms, candidate_limit);
+        let bm25_scores = self.bm25.score_terms(&profile_terms);
 
-        let max_bm25 = bm25_hits
+        // Normalised against the best admitted unit, not the best candidate: a unit
+        // that failed admission should not compress the range of the ones that did.
+        let max_bm25 = admitted
             .iter()
-            .map(|h| h.score)
+            .filter_map(|idx| bm25_scores.get(idx).copied())
             .fold(0.0f32, f32::max)
             .max(1e-5);
 
@@ -187,20 +201,11 @@ impl HybridRetriever {
         let query_terms: std::collections::HashSet<&str> =
             profile.terms.iter().map(|t| t.term.as_str()).collect();
 
-        // Map BM25 scores by unit_id
-        let bm25_map: std::collections::HashMap<&str, (f32, &SearchHit)> = bm25_hits
-            .iter()
-            .map(|h| (h.unit_id.as_str(), (h.score, h)))
-            .collect();
-
         let mut scored_hits = Vec::new();
 
         for idx in admitted {
             let unit = &self.bm25.units[idx];
-            let bm25_raw = bm25_map
-                .get(unit.id.as_str())
-                .map(|(s, _)| *s)
-                .unwrap_or(0.0);
+            let bm25_raw = bm25_scores.get(&idx).copied().unwrap_or(0.0);
             let normalized_bm25 = (bm25_raw / max_bm25).clamp(0.0, 1.0);
 
             // Semantic score
@@ -248,13 +253,6 @@ impl HybridRetriever {
             // a cut on the fused score cannot tell relevance from noise. Measured
             // on a 437-page manual, an uncovered query scored 0.565 at the top
             // while a covered one scored 0.557 — no line separates them.
-            let (snippet, snippet_page) = match bm25_map.get(unit.id.as_str()) {
-                Some((_, hit)) => (hit.snippet.clone(), hit.snippet_page),
-                // No BM25 candidate entry, so the snippet is the unit's opening:
-                // that text is on the unit's first page by construction.
-                None => (unit.text.chars().take(200).collect(), unit.page_start),
-            };
-
             scored_hits.push(HybridSearchHit {
                 unit_id: unit.id.clone(),
                 document_id: unit.document_id.clone(),
@@ -262,8 +260,10 @@ impl HybridRetriever {
                 page_start: unit.page_start,
                 page_end: unit.page_end,
                 section_id: unit.section_id.clone(),
-                snippet,
-                snippet_page,
+                // Filled in below, for the hits that survive the cut.
+                unit_index: idx,
+                snippet: String::new(),
+                snippet_page: unit.page_start,
                 final_score,
                 bm25_score: bm25_raw,
                 semantic_score,
@@ -284,6 +284,16 @@ impl HybridRetriever {
                 .then_with(|| a.unit_id.cmp(&b.unit_id))
         });
         scored_hits.truncate(limit);
+
+        // Snippets last: extracting one scans the unit's text, and doing it for
+        // every candidate only to discard most of them cost about six times the
+        // whole search.
+        for hit in &mut scored_hits {
+            let (snippet, page) = self.bm25.snippet_for(hit.unit_index, &profile_terms);
+            hit.snippet = snippet;
+            hit.snippet_page = page;
+        }
+
         Ok(scored_hits)
     }
 }
