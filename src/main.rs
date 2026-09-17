@@ -733,7 +733,13 @@ async fn main() -> anyhow::Result<()> {
                     if let Some(att) = doc.get_attachment(&target_name) {
                         if let Some(ref dir) = extract_dir {
                             std::fs::create_dir_all(dir)?;
-                            let out_path = std::path::Path::new(dir).join(&att.filename);
+                            // The name comes from the PDF, so it decides nothing
+                            // about where the bytes land.
+                            let out_path = docugraph::document::safe_output_path(
+                                std::path::Path::new(dir),
+                                &att.filename,
+                            )
+                            .map_err(|e| anyhow::anyhow!(e))?;
                             std::fs::write(&out_path, &att.data)?;
                             eprintln!(
                                 "💾 Extracted attachment '{}' to: {}",
@@ -781,16 +787,29 @@ async fn main() -> anyhow::Result<()> {
                     }
                 } else if let Some(ref dir) = extract_dir {
                     std::fs::create_dir_all(dir)?;
+                    let mut written = 0usize;
                     for att in &doc.attachments {
-                        let out_path = std::path::Path::new(dir).join(&att.filename);
-                        std::fs::write(&out_path, &att.data)?;
-                        eprintln!("💾 Extracted '{}' ({} bytes)", att.filename, att.size_bytes);
+                        // Refusing one attachment must not abort the rest.
+                        match docugraph::document::safe_output_path(
+                            std::path::Path::new(dir),
+                            &att.filename,
+                        ) {
+                            Ok(out_path) => {
+                                std::fs::write(&out_path, &att.data)?;
+                                written += 1;
+                                // Report where it went, not what the PDF called
+                                // it: the two differ exactly when it mattered.
+                                eprintln!(
+                                    "💾 Extracted '{}' ({} bytes) -> {}",
+                                    att.filename,
+                                    att.size_bytes,
+                                    out_path.display()
+                                );
+                            }
+                            Err(why) => eprintln!("⚠️  Skipped attachment: {why}"),
+                        }
                     }
-                    eprintln!(
-                        "✅ Extracted {} attachment(s) to: {}",
-                        doc.attachments.len(),
-                        dir
-                    );
+                    eprintln!("✅ Extracted {} attachment(s) to: {}", written, dir);
                 } else if format.eq_ignore_ascii_case("json") {
                     let summaries: Vec<docugraph::mcp::AttachmentSummaryResult> = doc
                         .attachments

@@ -38,7 +38,12 @@ impl Default for GraphicsState {
 /// Scan PDF page content stream operations for prompt injection vectors (Tr 3 invisible text, microscopic font size).
 pub fn scan_page_security(doc: &lopdf::Document, page_id: (u32, u16)) -> PageSecurityScan {
     let mut scan = PageSecurityScan::default();
-    let content_data = doc.get_page_content(page_id);
+    // A stream that refuses to decompress within the limit is not scannable, and
+    // an unscannable page must not be reported as clean.
+    let Ok(content_data) = doc.get_page_content_with_limit(page_id, super::MAX_DECOMPRESSED_BYTES)
+    else {
+        return scan;
+    };
     if content_data.is_empty() {
         return scan;
     }
@@ -204,8 +209,11 @@ pub fn load_pdf_from_path_with_password(
     let sha256_hash = hex::encode(hasher.finalize());
 
     // Load PDF using lopdf
-    let mut pdf_doc = lopdf::Document::load_mem(&bytes)
-        .with_context(|| format!("Failed to parse PDF binary structure: {}", path.display()))?;
+    let mut pdf_doc = lopdf::Document::load_mem_with_options(
+        &bytes,
+        lopdf::LoadOptions::with_max_decompressed_size(super::MAX_DECOMPRESSED_BYTES),
+    )
+    .with_context(|| format!("Failed to parse PDF binary structure: {}", path.display()))?;
 
     // Handle decryption if the PDF is encrypted
     let is_encrypted = pdf_doc.is_encrypted();
@@ -281,13 +289,15 @@ pub fn load_pdf_from_path_with_password(
                 debug!(target: "parser", page = page_num, "Applied spatial layout reading order reconstruction");
                 reconstructed
             }
-            None => match pdf_doc.extract_text(&[page_num]) {
-                Ok(extracted) => extracted,
-                Err(err) => {
-                    warn!(target: "parser", page = page_num, error = %err, "Failed to extract text for page; recording as empty");
-                    String::new()
+            None => {
+                match pdf_doc.extract_text_with_limit(&[page_num], super::MAX_DECOMPRESSED_BYTES) {
+                    Ok(extracted) => extracted,
+                    Err(err) => {
+                        warn!(target: "parser", page = page_num, error = %err, "Failed to extract text for page; recording as empty");
+                        String::new()
+                    }
                 }
-            },
+            }
         };
 
         // Reconstruct tabular text zones into GitHub Flavored Markdown (GFM) tables

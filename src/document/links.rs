@@ -307,11 +307,29 @@ fn find_named_dest_in_node(
 }
 
 /// Helper to resolve target destination value (Array, Reference, or Dictionary with /D).
+/// How many levels of `/D` indirection a destination may hide behind.
+///
+/// A destination that points at a destination that points back at it is a cycle;
+/// without a cap, resolving it recurses until the stack aborts the process.
+const MAX_DEST_DEPTH: usize = 12;
+
 fn resolve_dest_target(
     doc: &lopdf::Document,
     target: &lopdf::Object,
     page_map: &HashMap<(u32, u16), u32>,
 ) -> Option<u32> {
+    resolve_dest_target_depth(doc, target, page_map, 0)
+}
+
+fn resolve_dest_target_depth(
+    doc: &lopdf::Document,
+    target: &lopdf::Object,
+    page_map: &HashMap<(u32, u16), u32>,
+    depth: usize,
+) -> Option<u32> {
+    if depth > MAX_DEST_DEPTH {
+        return None;
+    }
     match target {
         lopdf::Object::Array(arr) => arr.first().and_then(|first| match first {
             lopdf::Object::Reference(r) => page_map.get(r).copied(),
@@ -320,14 +338,14 @@ fn resolve_dest_target(
         }),
         lopdf::Object::Reference(r) => {
             if let Ok(obj) = doc.get_object(*r) {
-                resolve_dest_target(doc, obj, page_map)
+                resolve_dest_target_depth(doc, obj, page_map, depth + 1)
             } else {
                 None
             }
         }
         lopdf::Object::Dictionary(d) => {
             if let Ok(d_obj) = d.get(b"D") {
-                resolve_dest_target(doc, d_obj, page_map)
+                resolve_dest_target_depth(doc, d_obj, page_map, depth + 1)
             } else {
                 None
             }

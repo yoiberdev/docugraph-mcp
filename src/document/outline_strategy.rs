@@ -1,6 +1,6 @@
 //! Outline and bookmarks extraction strategy implementations (GoF Strategy Pattern).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
 use super::links::{object_to_string, resolve_dest};
@@ -57,7 +57,9 @@ impl OutlineExtractor for NativeOutlineExtractor {
             .ok()
             .and_then(|r| r.as_reference().ok())
         {
-            traverse_outline_items(doc, item_id, 1, None, page_map, &mut sections);
+            let walk = OutlineWalk { doc, page_map };
+            let mut visited = HashSet::new();
+            traverse_outline_items(&walk, item_id, 1, None, &mut sections, &mut visited, 0);
         }
 
         sections
@@ -132,16 +134,61 @@ impl OutlineExtractor for FallbackOutlineStrategy {
 }
 
 /// Recursively traverse outline items following Next and First links.
+/// How deep an outline may nest before we stop following it.
+///
+/// Real outlines are a handful of levels; this is only here so that a malicious
+/// or broken `/First` chain cannot recurse until the stack gives out. A stack
+/// overflow aborts the process, so `anyhow` and the per-file error handling in
+/// `docugraph index <dir>` cannot contain it: one hostile PDF would take the
+/// whole batch down with it, including the files queued behind it.
+const MAX_OUTLINE_DEPTH: usize = 32;
+
+/// What every step of the outline walk needs but none of it changes.
+struct OutlineWalk<'a> {
+    doc: &'a lopdf::Document,
+    page_map: &'a HashMap<(u32, u16), u32>,
+}
+
 fn traverse_outline_items(
-    doc: &lopdf::Document,
+    walk: &OutlineWalk<'_>,
+    first_id: (u32, u16),
+    level: u32,
+    parent_id: Option<String>,
+    acc: &mut Vec<SectionNode>,
+    visited: &mut HashSet<(u32, u16)>,
+    depth: usize,
+) {
+    if depth > MAX_OUTLINE_DEPTH {
+        return;
+    }
+
+    // `/Next` is a flat chain, so it is walked rather than recursed into: a
+    // document with a few thousand top-level bookmarks is unremarkable, and
+    // recursing once per sibling overflows the stack at around two thousand.
+    let mut current = Some(first_id);
+    while let Some(item_id) = current {
+        // A `/First` or `/Next` that points back at an item already seen is a
+        // cycle; without this it is an unrecoverable abort.
+        if !visited.insert(item_id) {
+            return;
+        }
+        current =
+            traverse_one_outline_item(walk, item_id, level, parent_id.clone(), acc, visited, depth);
+    }
+}
+
+/// Handle a single outline item, returning the sibling that follows it.
+fn traverse_one_outline_item(
+    walk: &OutlineWalk<'_>,
     item_id: (u32, u16),
     level: u32,
     parent_id: Option<String>,
-    page_map: &HashMap<(u32, u16), u32>,
     acc: &mut Vec<SectionNode>,
-) {
-    let Ok(item_dict) = doc.get_dictionary(item_id) else {
-        return;
+    visited: &mut HashSet<(u32, u16)>,
+    depth: usize,
+) -> Option<(u32, u16)> {
+    let Ok(item_dict) = walk.doc.get_dictionary(item_id) else {
+        return None;
     };
 
     let title = item_dict
@@ -150,7 +197,7 @@ fn traverse_outline_items(
         .and_then(object_to_string)
         .unwrap_or_else(|| "Untitled Section".to_string());
 
-    let page_target = resolve_outline_page(doc, item_dict, page_map).unwrap_or(1);
+    let page_target = resolve_outline_page(walk.doc, item_dict, walk.page_map).unwrap_or(1);
     let sec_id = format!("{}-p{}", slugify_title(&title), page_target);
 
     let mut node = SectionNode {
@@ -171,25 +218,27 @@ fn traverse_outline_items(
         .and_then(|r| r.as_reference().ok())
     {
         traverse_outline_items(
-            doc,
+            walk,
             child_id,
             level + 1,
             Some(sec_id),
-            page_map,
             &mut node.children,
+            visited,
+            depth + 1,
         );
     }
 
     acc.push(node);
 
-    // Traverse sibling items
-    if let Some(next_id) = item_dict
+    // The sibling that follows, for the caller's loop to continue with. Siblings
+    // keep the same parent: recursing with `None` here used to leave every
+    // bookmark but the first child of a node without a parent_id, so
+    // `document_get_section(include_parent: true)` returned no parent context for
+    // most sections of a bookmarked PDF.
+    item_dict
         .get(b"Next")
         .ok()
         .and_then(|r| r.as_reference().ok())
-    {
-        traverse_outline_items(doc, next_id, level, None, page_map, acc);
-    }
 }
 
 /// Resolve the destination page of an outline item via /Dest or /A (Action GoTo).

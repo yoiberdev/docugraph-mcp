@@ -121,7 +121,9 @@ impl PageRenderer for NativePageRenderer {
         }
 
         // 4. Rasterize text layout blocks
-        let content_data = doc.get_page_content(page_id);
+        let content_data = doc
+            .get_page_content_with_limit(page_id, crate::document::MAX_DECOMPRESSED_BYTES)
+            .unwrap_or_default();
         if !content_data.is_empty()
             && let Ok(content) = Content::decode(&content_data)
         {

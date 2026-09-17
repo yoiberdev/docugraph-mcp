@@ -803,7 +803,11 @@ pub fn extract_page_text_spatial(
     page_id: (u32, u16),
     only_if_multi_column: bool,
 ) -> Option<String> {
-    let content_data = doc.get_page_content(page_id);
+    let Ok(content_data) =
+        doc.get_page_content_with_limit(page_id, crate::document::MAX_DECOMPRESSED_BYTES)
+    else {
+        return None;
+    };
     if content_data.is_empty() {
         return None;
     }

@@ -62,7 +62,8 @@ pub fn extract_document_forms(
     };
 
     for field_ref in arr {
-        traverse_field(&ctx, field_ref, "", None, 0, &mut fields);
+        let mut visited = std::collections::HashSet::new();
+        traverse_field(&ctx, field_ref, "", None, 0, &mut fields, &mut visited, 0);
     }
 
     fields
@@ -76,6 +77,13 @@ struct FormContext<'a> {
 }
 
 /// Recursively traverse a field object and its /Kids, inheriting parent attributes.
+/// How deep an AcroForm field tree may nest before we stop following it.
+///
+/// Field hierarchies are shallow in practice; the cap exists so that a cyclic or
+/// adversarial `/Kids` chain cannot recurse until the stack aborts the process.
+const MAX_FIELD_DEPTH: usize = 32;
+
+#[allow(clippy::too_many_arguments)]
 fn traverse_field(
     ctx: &FormContext<'_>,
     field_obj: &lopdf::Object,
@@ -83,8 +91,19 @@ fn traverse_field(
     inherited_type: Option<&[u8]>,
     inherited_flags: u32,
     acc: &mut Vec<FormField>,
+    visited: &mut std::collections::HashSet<(u32, u16)>,
+    depth: usize,
 ) {
+    if depth > MAX_FIELD_DEPTH {
+        return;
+    }
     let field_id = field_obj.as_reference().ok();
+    // A /Kids entry pointing back at an ancestor is a cycle, not a field.
+    if let Some(id) = field_id
+        && !visited.insert(id)
+    {
+        return;
+    }
     let dict = match field_obj {
         lopdf::Object::Reference(id) => ctx.doc.get_dictionary(*id).ok(),
         lopdf::Object::Dictionary(d) => Some(d),
@@ -152,7 +171,16 @@ fn traverse_field(
             if has_subfields {
                 // Hierarchical parent with subfields
                 for kid in &kids {
-                    traverse_field(ctx, kid, &fully_qualified, ft_bytes, flags, acc);
+                    traverse_field(
+                        ctx,
+                        kid,
+                        &fully_qualified,
+                        ft_bytes,
+                        flags,
+                        acc,
+                        visited,
+                        depth + 1,
+                    );
                 }
                 return;
             }

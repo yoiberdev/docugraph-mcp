@@ -1,6 +1,7 @@
 //! Extraction and decoding of PDF embedded files and attachments (/EmbeddedFiles, /AF, /FileAttachment).
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use tracing::debug;
 
 use super::links::object_to_string;
@@ -129,13 +130,39 @@ pub fn extract_document_attachments(
     attachments
 }
 
-/// Recursively traverse a PDF Name Tree node for /EmbeddedFiles.
+/// How deep an /EmbeddedFiles name tree may nest before we stop following it.
+///
+/// Name trees are balanced and shallow; the cap is here because a `/Kids` entry
+/// pointing back at an ancestor would otherwise recurse until the stack aborts
+/// the process, which no error handling above can contain.
+const MAX_NAME_TREE_DEPTH: usize = 32;
+
 fn traverse_name_tree(
     doc: &lopdf::Document,
     node_obj: &lopdf::Object,
     acc: &mut Vec<EmbeddedAttachment>,
     seen_stream_ids: &mut HashSet<(u32, u16)>,
 ) {
+    let mut visited_nodes = HashSet::new();
+    traverse_name_tree_depth(doc, node_obj, acc, seen_stream_ids, &mut visited_nodes, 0);
+}
+
+fn traverse_name_tree_depth(
+    doc: &lopdf::Document,
+    node_obj: &lopdf::Object,
+    acc: &mut Vec<EmbeddedAttachment>,
+    seen_stream_ids: &mut HashSet<(u32, u16)>,
+    visited_nodes: &mut HashSet<(u32, u16)>,
+    depth: usize,
+) {
+    if depth > MAX_NAME_TREE_DEPTH {
+        return;
+    }
+    if let lopdf::Object::Reference(id) = node_obj
+        && !visited_nodes.insert(*id)
+    {
+        return;
+    }
     let dict = match node_obj {
         lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
         lopdf::Object::Dictionary(d) => Some(d),
@@ -187,7 +214,7 @@ fn traverse_name_tree(
 
         if let Some(arr) = kids_arr {
             for kid in &arr {
-                traverse_name_tree(doc, kid, acc, seen_stream_ids);
+                traverse_name_tree_depth(doc, kid, acc, seen_stream_ids, visited_nodes, depth + 1);
             }
         }
     }
@@ -321,4 +348,52 @@ fn sanitize_id(s: &str) -> String {
             }
         })
         .collect()
+}
+
+/// A file name safe to join onto an output directory, or `None` when the
+/// attachment does not supply a usable one.
+///
+/// An attachment's name comes from the PDF's `/UF` or `/F`, which is written by
+/// whoever produced the file. Joining it to a destination directly let a document
+/// choose where its own bytes landed: verified against the CLI, an attachment
+/// named `../../ESCAPED_pwned.txt` wrote two directories above `--extract-dir`
+/// while the command reported success into that directory, and an absolute name
+/// ignored the destination entirely.
+///
+/// `Path::file_name` is what does the work - it discards every parent component,
+/// every separator and any drive prefix, and yields nothing at all for `.` or
+/// `..`. The rest is a guard against a platform surprising us.
+pub fn safe_output_name(filename: &str) -> Option<String> {
+    let name = Path::new(filename).file_name()?.to_str()?;
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    if name.contains(['/', '\\', ':']) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// Resolve where an attachment may be written under `dir`, refusing anything that
+/// would land outside it.
+///
+/// The name is reduced to a bare file name first, so escaping is already
+/// impossible; this then confirms it, which is what `SECURITY.md` promises and
+/// what makes a symlinked destination safe too.
+pub fn safe_output_path(dir: &Path, filename: &str) -> Result<PathBuf, String> {
+    let name = safe_output_name(filename).ok_or_else(|| {
+        format!("Attachment name {filename:?} is not a usable file name; refusing to write it.")
+    })?;
+
+    let base = std::fs::canonicalize(dir)
+        .map_err(|e| format!("Cannot resolve output directory {}: {e}", dir.display()))?;
+    let target = base.join(&name);
+
+    if !target.starts_with(&base) {
+        return Err(format!(
+            "Attachment {filename:?} would be written outside {}; refusing.",
+            dir.display()
+        ));
+    }
+    Ok(target)
 }
