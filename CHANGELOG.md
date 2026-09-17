@@ -13,7 +13,7 @@ unreleased. This entry previously claimed a shipped `0.1.0` and listed two tools
 nowhere in `src/`.
 
 ### Added
-- **MCP Server Core (`rmcp`):** Native stdio transport with strict separation of stdout (JSON-RPC protocol only) and stderr (telemetry with `tracing`). `Cargo.toml` requests `3.3`; the lock currently resolves `3.4.0`.
+- **MCP Server Core (`rmcp`):** Native stdio transport with strict separation of stdout (JSON-RPC protocol only) and stderr (telemetry with `tracing`). Requires rmcp `3.4`, pinned by the committed `Cargo.lock`.
 - **PDF Ingestion Engine (`lopdf`):** Digital PDF parser extracting pages, metadata, and native outline bookmarks (`/Outlines`) with full UTF-16BE decoding and named destination resolution.
 - **Document Graph & Provenance:** Hierarchical section tree (H1, H2, H3) and precise evidence citation tracking (`[Doc: ... p. ... § ...]`).
 - **Persistence & Caching:** Disk cache (`.docugraph_cache/`, overridable with `DOCUGRAPH_CACHE_DIR`) keyed by SHA-256 content hashes. It is also the handoff between the `index` CLI process and the `serve` process.
