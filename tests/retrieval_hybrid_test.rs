@@ -364,3 +364,125 @@ fn test_corpus_signature_is_order_independent() {
     let backward = CorpusSignature::of(&[b, a]);
     assert_eq!(forward, backward);
 }
+
+fn doc_with_rare_terms(id: &str, pages: usize, rare: &[&str]) -> Document {
+    let mut doc = Document::new(DocumentMetadata {
+        id: id.to_string(),
+        title: "Spec".to_string(),
+        total_pages: pages as u32,
+        content_hash: format!("hash-{id}-{pages}"),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    for p in 1..=pages {
+        let mut text = format!("Pagina {p} texto comun de relleno para el indice");
+        for (i, word) in rare.iter().enumerate() {
+            if p == 3 + i * 2 {
+                text.push(' ');
+                text.push_str(word);
+            }
+        }
+        doc.add_page(Page::new(p as u32, &text));
+    }
+    doc
+}
+
+/// Admission must never refuse a query whose every term is in the corpus.
+///
+/// Regression: the bar is the mean of the per-term IDFs and a passage holding one
+/// term carries exactly that IDF when all terms share a `df` - the normal case for
+/// rare identifiers, all at df=1. Neither the sum nor the division is exact in
+/// binary floating point, so an exact `>=` refused the passage about 9% of the
+/// time. The refusal reported no absent terms and told the agent to rephrase a
+/// query that was already right, while document_search returned the passages.
+#[test]
+fn test_admission_never_refuses_a_query_whose_terms_are_all_present() {
+    const RARE: &[&str] = &["zeta", "kappa", "omega", "sigma", "delta", "gamma", "theta"];
+    let mut refused = Vec::new();
+
+    for nterms in 2..=7usize {
+        let rare = &RARE[..nterms];
+        let query = rare.join(" ");
+        for pages in 20..=140usize {
+            let doc = doc_with_rare_terms("spec", pages, rare);
+            let retriever = HybridRetriever::build(&[doc], None);
+            let lexical = retriever.bm25().search(&query, 10).len();
+            let hybrid = retriever
+                .search(&query, 10, &HybridWeights::DEFAULT)
+                .map(|h| h.len())
+                .unwrap_or(0);
+            if lexical > 0 && hybrid == 0 {
+                refused.push((nterms, pages));
+            }
+        }
+    }
+
+    assert!(
+        refused.is_empty(),
+        "the hybrid path refused {} corpora that plain BM25 matched, e.g. {:?}",
+        refused.len(),
+        &refused[..refused.len().min(5)]
+    );
+}
+
+/// A passage carrying exactly the mean information of one query term is evidence.
+#[test]
+fn test_admits_is_inclusive_at_the_bar() {
+    let doc = doc_with_rare_terms("tie", 26, &["zeta", "kappa", "omega"]);
+    let index = docugraph::retrieval::Bm25Index::build_from_documents(&[doc], None);
+    let profile = index.profile_query("zeta kappa omega");
+
+    let single_term_mass = profile.terms[0].idf;
+    assert!(
+        profile.admits(single_term_mass),
+        "carrying one of three equally rare terms is exactly the bar: mass {} vs floor {}",
+        single_term_mass,
+        profile.admission_floor()
+    );
+    assert!(
+        !profile.admits(single_term_mass * 0.9),
+        "the tolerance must not admit a passage that is genuinely below the bar"
+    );
+}
+
+/// Identical calls must return identical results.
+///
+/// Regression: the admitted set came out of a HashMap, whose iteration order is
+/// randomised per instance, and the comparator ordered by score alone. Tied units
+/// therefore landed in a different order on every call and truncate() kept an
+/// arbitrary subset of the tie. The repo requires determinism (8cc8a52).
+#[test]
+fn test_hybrid_search_is_deterministic_across_identical_calls() {
+    let mut doc = Document::new(DocumentMetadata {
+        id: "tied".to_string(),
+        title: "Tied".to_string(),
+        total_pages: 6,
+        content_hash: "hash-tied".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    for p in 1..=6 {
+        doc.add_page(Page::new(
+            p,
+            "procedimiento de calibracion identico en cada pagina",
+        ));
+    }
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    let first: Vec<String> = retriever
+        .search("procedimiento de calibracion", 3, &HybridWeights::DEFAULT)
+        .expect("the corpus covers this query")
+        .iter()
+        .map(|h| h.unit_id.clone())
+        .collect();
+
+    for call in 1..40 {
+        let again: Vec<String> = retriever
+            .search("procedimiento de calibracion", 3, &HybridWeights::DEFAULT)
+            .expect("the corpus covers this query")
+            .iter()
+            .map(|h| h.unit_id.clone())
+            .collect();
+        assert_eq!(again, first, "call {call} returned a different ordering");
+    }
+}

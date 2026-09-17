@@ -52,9 +52,9 @@ pub struct NoEvidence {
     /// Query terms that appear nowhere in the corpus.
     pub absent_terms: Vec<String>,
     /// The most query information any single passage carried.
-    pub best_matched_idf: f32,
+    pub best_matched_idf: f64,
     /// The information a passage needed to carry to count as evidence.
-    pub required_idf: f32,
+    pub required_idf: f64,
 }
 
 impl NoEvidence {
@@ -146,11 +146,10 @@ impl HybridRetriever {
         // 1. Admission: keep only units carrying at least the mean information of
         //    a query term. Candidates come from the postings, so this never scans
         //    the whole corpus.
-        let floor = profile.admission_floor();
         let matched = self.bm25.matched_idf(&profile);
         let admitted: Vec<usize> = matched
             .iter()
-            .filter_map(|(&idx, &mass)| (mass >= floor).then_some(idx))
+            .filter_map(|(&idx, &mass)| profile.admits(mass).then_some(idx))
             .collect();
 
         if admitted.is_empty() {
@@ -161,8 +160,8 @@ impl HybridRetriever {
                     .into_iter()
                     .map(str::to_string)
                     .collect(),
-                best_matched_idf: matched.values().copied().fold(0.0, f32::max),
-                required_idf: floor,
+                best_matched_idf: matched.values().copied().fold(0.0, f64::max),
+                required_idf: profile.admission_floor(),
             });
         }
 
@@ -264,10 +263,16 @@ impl HybridRetriever {
         }
 
         // Sort descending by final_score
+        // Total order, not just by score. `admitted` comes out of a HashMap, whose
+        // iteration order is randomised per instance, so a score-only comparator
+        // left tied units in a different order on every call and `truncate` then
+        // kept an arbitrary subset of the tie. Ties are common here: duplicated
+        // boilerplate pages score identically on all three signals.
         scored_hits.sort_by(|a, b| {
             b.final_score
                 .partial_cmp(&a.final_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.unit_id.cmp(&b.unit_id))
         });
         scored_hits.truncate(limit);
         Ok(scored_hits)

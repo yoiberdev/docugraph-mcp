@@ -48,7 +48,7 @@ pub struct QueryTerm {
     pub term: String,
     /// How many units contain the term. Zero means it is absent from the corpus.
     pub df: usize,
-    pub idf: f32,
+    pub idf: f64,
 }
 
 /// The distinct terms of a query, measured against a specific index.
@@ -60,7 +60,7 @@ pub struct QueryTerm {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryProfile {
     pub terms: Vec<QueryTerm>,
-    pub total_idf: f32,
+    pub total_idf: f64,
 }
 
 impl QueryProfile {
@@ -108,11 +108,41 @@ impl QueryProfile {
     /// admits 85 units for the memoization query and 9 for the ibuprofen one (4
     /// wrong verdicts); taking the maximum present IDF behaves the same (4). The
     /// mean over all terms is wrong 3 times, and is what ships.
-    pub fn admission_floor(&self) -> f32 {
+    ///
+    /// Compare against it with [`QueryProfile::admits`] rather than `>=` directly:
+    /// the bar and the mass a passage carries are floating-point sums of the same
+    /// per-term IDFs accumulated in different orders, so an exact comparison
+    /// mis-handles the tie this rule is meant to include.
+    pub fn admission_floor(&self) -> f64 {
         if self.terms.is_empty() {
-            return f32::INFINITY;
+            return f64::INFINITY;
         }
-        self.total_idf / self.terms.len() as f32
+        self.total_idf / self.terms.len() as f64
+    }
+
+    /// Does a passage carrying `matched_idf` of this query count as evidence?
+    ///
+    /// Inclusive by design and tolerant by necessity. When every query term shares a
+    /// `df` - the normal case for the rare identifiers agents search for, all
+    /// sitting at df=1 - the bar is `(v + v + v) / 3` while a passage holding one of
+    /// them carries exactly `v`. Neither `3v` nor the division is exact in binary
+    /// floating point, so the bar can land one ULP above `v` and the passage is
+    /// refused although the rule says it qualifies. That refusal is worse than it
+    /// sounds: no query term is absent, so `NoEvidence` reports none, and the
+    /// message tells the agent to rephrase a query that was already right while
+    /// `document_search` happily returns the same passages.
+    ///
+    /// The slack is the error bound of the bar itself - at most `n` additions and
+    /// one division, each contributing at most one ULP - so it is derived from the
+    /// computation rather than tuned. At roughly 1e-15 relative it cannot change any
+    /// verdict that was not already a tie.
+    pub fn admits(&self, matched_idf: f64) -> bool {
+        let floor = self.admission_floor();
+        if !floor.is_finite() {
+            return false;
+        }
+        let slack = floor.abs() * f64::EPSILON * (self.terms.len() + 1) as f64;
+        matched_idf >= floor - slack
     }
 
     /// Query terms that appear nowhere in the corpus.
@@ -228,8 +258,8 @@ impl Bm25Index {
     ///
     /// Walks the postings of the query terms, so the cost is proportional to the
     /// matches rather than to the size of the corpus.
-    pub fn matched_idf(&self, profile: &QueryProfile) -> HashMap<usize, f32> {
-        let mut mass: HashMap<usize, f32> = HashMap::new();
+    pub fn matched_idf(&self, profile: &QueryProfile) -> HashMap<usize, f64> {
+        let mut mass: HashMap<usize, f64> = HashMap::new();
         for qt in &profile.terms {
             let Some(postings) = self.inverted_index.get(qt.term.as_str()) else {
                 continue;
@@ -252,7 +282,7 @@ impl Bm25Index {
 
         for term in &query_terms {
             if let Some(postings) = self.inverted_index.get(term) {
-                let idf = idf(self.total_docs, postings.len());
+                let idf = idf(self.total_docs, postings.len()) as f32;
 
                 for &(unit_idx, freq) in postings {
                     let unit = &self.units[unit_idx];
@@ -296,9 +326,9 @@ impl Bm25Index {
 /// A term absent from the corpus (`df == 0`) takes the maximum value: it is both
 /// maximally informative and maximally unsatisfied. Admission and ranking share
 /// this function so the two can never disagree about what a term is worth.
-fn idf(total: usize, df: usize) -> f32 {
-    let n = total as f32;
-    let d = df as f32;
+fn idf(total: usize, df: usize) -> f64 {
+    let n = total as f64;
+    let d = df as f64;
     ((n - d + 0.5) / (d + 0.5) + 1.0).ln()
 }
 
