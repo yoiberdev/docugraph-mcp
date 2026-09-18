@@ -5,6 +5,58 @@ All notable changes to **DocuGraph MCP** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **BREAKING - the tool surface is 9 tools, down from 15.** `document_ping`,
+  `document_search`, `document_search_hybrid`, `document_get_context`,
+  `document_get_evidence`, `document_get_links`, `document_get_forms` and
+  `document_get_attachments` are gone. Their work is reachable through
+  `document_query`, whose `mode` selects `evidence` (the default), `context` or
+  `hits`, and `document_extract`, whose `kind` selects `links`, `forms` or
+  `attachments`. Every declared tool is schema an agent pays for in every
+  session before asking anything: measured over stdio, the 15 cost 9536 bytes
+  (about 2509 tokens) and the 9 cost 7246 (about 1907).
+- **BREAKING - the three weight knobs on hybrid search are gone.** They invited
+  callers to tune a ranking whose defaults were measured, and no caller had the
+  measurements to do better.
+- `document_search`'s replacement abstains. The old one called the raw BM25
+  ranking, which always has a top result, so the retrieval tool with the
+  plainest name was the only entry point that could not answer "no evidence".
+- Hybrid search no longer returns the same passage twice under different section
+  headings. Snippets are taken while walking the ranking rather than after
+  cutting it, so the walk continues until `limit` distinct ones are held.
+  Measured over 8 queries against four public documents: 13% of returned snippet
+  bytes were text the caller already had, now 0%, at 25.4 ms per query against
+  25.8 ms before.
+- The README is in English, with the Spanish version at `README.es.md`.
+
+### Fixed
+- **Outline titles stored as indirect references are read.** The match accepted
+  only `Object::String`, so an entry written as a reference to a string read as
+  absent. On the C++ working draft N4950, 2134 pages, all 3075 outline entries
+  store `/Title` this way: every section was indexed and cited as "Untitled
+  Section".
+- **Text strings without a byte-order mark decode as PDFDocEncoding.** The
+  specification writes them that way, where an accented letter is a single high
+  byte, so `from_utf8_lossy` replaced each with `U+FFFD`. On the consolidated
+  Spanish criminal code from the BOE, 946 of 953 titles were corrupted, leaving
+  the document indexed under headings no accented query could match.
+- **The hidden-text annotator no longer amplifies a page.** It rewrote the page
+  once per snippet, wrapping each match in a marker that still contained the
+  matched text, so later snippets matched inside what earlier passes emitted.
+  NIST SP 800-53r5 reports 545 hidden snippets on one page: ingesting it aborted
+  the process on a 12.3 GB allocation twelve minutes in. It now ingests in 2.4 s.
+- **Column detection no longer sizes an allocation by untrusted geometry.** It
+  took the page extent over every fragment and turned it into one bin per 2 pt,
+  so a runaway coordinate sized that array by it; a page of non-finite
+  coordinates asked for `usize::MAX`, since `f32::INFINITY as usize` saturates.
+- The lexical ranking gained the `unit_id` tiebreak the hybrid path already had,
+  since it sorts a `HashMap` whose iteration order is randomised per instance.
+- The `x86_64-apple-darwin` release slice is cross-compiled from Apple Silicon.
+  GitHub retired the `macos-13` image, so that job was never claimed by a runner
+  and sat queued rather than failing, and the publish step waits on all five.
+
 ## [0.1.0] - 2026-09-18
 
 The first tagged release. Binaries for Windows, Linux and macOS on x86_64 and
