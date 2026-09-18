@@ -5,12 +5,14 @@ All notable changes to **DocuGraph MCP** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0] - 2026-09-18
 
-Nothing has been tagged yet (`git tag -l` is empty), so everything below is still
-unreleased. This entry previously claimed a shipped `0.1.0` and listed two tools,
-`pattern_get` and `pattern_compare`, that were removed in `7d936a8` and exist
-nowhere in `src/`.
+The first tagged release. Binaries for Windows, Linux and macOS on x86_64 and
+arm64 are attached to it, each with its `.sha256`.
+
+An earlier draft of this entry claimed a shipped `0.1.0` that never existed, and
+listed two tools — `pattern_get` and `pattern_compare` — that `7d936a8` had
+removed and that appear nowhere in `src/`. This one describes the code.
 
 ### Added
 - **MCP Server Core (`rmcp`):** Native stdio transport with strict separation of stdout (JSON-RPC protocol only) and stderr (telemetry with `tracing`). Requires rmcp `3.4`, pinned by the committed `Cargo.lock`.
