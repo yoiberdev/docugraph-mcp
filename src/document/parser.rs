@@ -316,25 +316,15 @@ pub fn load_pdf_from_path_with_password(
                 "Untrusted hidden or microscopic text detected in PDF content stream"
             );
 
-            if security_scan.hidden_snippets.is_empty() {
-                text.insert_str(
+            match annotate_hidden_text(&text, &security_scan.hidden_snippets) {
+                Some(annotated) => text = annotated,
+                // Either there was nothing markable or marking would have run away.
+                // The page is still reported as carrying untrusted text, which is
+                // what a reader has to know; only the inline positions are lost.
+                None => text.insert_str(
                     0,
                     "[SECURITY ADVISORY: Untrusted hidden or microscopic text detected on this page]\n",
-                );
-            } else {
-                for snippet in &security_scan.hidden_snippets {
-                    if text.contains(snippet) {
-                        text = text.replace(
-                            snippet,
-                            &format!("[Untrusted Hidden Text: \"{}\"]", snippet),
-                        );
-                    } else {
-                        text.push_str(&format!(
-                            "\n\n[Untrusted Hidden Text Detected: \"{}\"]",
-                            snippet
-                        ));
-                    }
-                }
+                ),
             }
         }
 
@@ -473,6 +463,85 @@ pub fn load_pdf_from_path_with_password(
         forms,
         attachments,
     })
+}
+
+/// How far the hidden-text annotation may grow a page, as a multiple of its text.
+const MAX_ANNOTATION_GROWTH: usize = 4;
+
+/// How many distinct hidden snippets are marked inline before the page falls back
+/// to the advisory alone.
+const MAX_ANNOTATED_SNIPPETS: usize = 512;
+
+/// Mark every occurrence of a page's hidden text in place, in one pass.
+///
+/// Returns `None` when there is nothing to mark, or when marking would grow the
+/// page past [`MAX_ANNOTATION_GROWTH`]; the caller then falls back to a single
+/// advisory line, so the warning survives even when the positions do not.
+///
+/// Rewriting the page once per snippet, which is what this replaced, is not merely
+/// quadratic in the number of snippets. Each rewrite wraps the matched text in a
+/// marker that still contains that text, so the next snippet - and any snippet
+/// that is a substring of a marker already inserted - matches inside what the
+/// previous pass emitted, and the page grows by a factor on every rewrite. NIST SP
+/// 800-53r5, a public 500-page document, reports 545 hidden snippets on one page:
+/// ingesting it grew that page until the process aborted on a 12.3 GB allocation,
+/// twelve minutes in. Aborting is not a failure a caller can catch.
+///
+/// Collecting the match positions first and emitting left to right cannot re-enter
+/// what it has already written, so each occurrence is marked exactly once and the
+/// output grows by the markers alone.
+fn annotate_hidden_text(text: &str, snippets: &[String]) -> Option<String> {
+    let mut needles: Vec<&str> = snippets
+        .iter()
+        .map(|s| s.trim())
+        // A one-character snippet is not evidence of anything and occurs on every
+        // line, so marking it would bury the page in markers.
+        .filter(|s| s.chars().count() >= 2)
+        .collect();
+    needles.sort_unstable();
+    needles.dedup();
+    if needles.is_empty() || needles.len() > MAX_ANNOTATED_SNIPPETS {
+        return None;
+    }
+
+    // Every occurrence of every snippet, as byte ranges into `text`.
+    let mut marks: Vec<(usize, usize)> = Vec::new();
+    for needle in &needles {
+        let mut from = 0;
+        while let Some(at) = text[from..].find(needle) {
+            let start = from + at;
+            let end = start + needle.len();
+            marks.push((start, end));
+            from = end;
+        }
+    }
+    if marks.is_empty() {
+        return None;
+    }
+
+    // Earliest first, and at one position the longest match, so a snippet that
+    // contains another is marked as the whole it is rather than twice.
+    marks.sort_unstable_by_key(|&(start, end)| (start, std::cmp::Reverse(end)));
+
+    let ceiling = text.len().saturating_mul(MAX_ANNOTATION_GROWTH);
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for (start, end) in marks {
+        // Overlapping matches: the first one emitted wins, the rest are inside it.
+        if start < cursor {
+            continue;
+        }
+        out.push_str(&text[cursor..start]);
+        out.push_str("[Untrusted Hidden Text: \"");
+        out.push_str(&text[start..end]);
+        out.push_str("\"]");
+        cursor = end;
+        if out.len() > ceiling {
+            return None;
+        }
+    }
+    out.push_str(&text[cursor..]);
+    Some(out)
 }
 
 /// Extract optional Title from PDF Info dictionary.

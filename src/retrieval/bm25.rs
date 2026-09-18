@@ -434,9 +434,46 @@ impl Bm25Index {
     /// scores the same query admission judged. Re-tokenizing the raw string here
     /// would drop any term `profile_query` resolved to the form the corpus uses.
     pub fn search_terms(&self, query_terms: &[String], limit: usize) -> Vec<SearchHit> {
-        let scores = self.score_terms(query_terms);
+        self.rank_into_hits(self.score_terms(query_terms), query_terms, limit)
+    }
+
+    /// The lexical ranking, restricted to the units carrying enough of the query
+    /// to count as evidence.
+    ///
+    /// [`Bm25Index::search`] is the raw channel, and a raw ranking always has a
+    /// top result: for a question the corpus does not answer, its list of least
+    /// bad passages is indistinguishable from a list of right ones. The hybrid
+    /// path put [`QueryProfile::admits`] in front of that and this one did not,
+    /// which left the retrieval tool with the plainest name as the only one that
+    /// could not abstain - the single place a reader could have shown that the
+    /// guarantee did not hold.
+    pub fn search_admitted(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+        let terms = tokenize(query);
+        let profile = self.profile_query(query);
+        let matched = self.matched_idf(&profile);
+        let mut scores = self.score_terms(&terms);
+        scores.retain(|idx, _| matched.get(idx).copied().is_some_and(|m| profile.admits(m)));
+        self.rank_into_hits(scores, &terms, limit)
+    }
+
+    /// Turn scored unit indices into the ranked hits a caller reads.
+    fn rank_into_hits(
+        &self,
+        scores: HashMap<usize, f32>,
+        query_terms: &[String],
+        limit: usize,
+    ) -> Vec<SearchHit> {
         let mut ranked: Vec<(usize, f32)> = scores.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Total order, not score alone. `scores` comes out of a HashMap, whose
+        // iteration order is randomised per instance, so a score-only comparator
+        // leaves tied units in a different order on every call and `take` then
+        // keeps an arbitrary subset of the tie. Ties are common: boilerplate
+        // repeated across chapters scores identically.
+        ranked.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| self.units[a.0].id.cmp(&self.units[b.0].id))
+        });
 
         ranked
             .into_iter()

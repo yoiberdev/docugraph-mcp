@@ -1,6 +1,7 @@
 //! Hybrid search combining BM25 keyword score, semantic cosine similarity, and structural relevance.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::bm25::Bm25Index;
@@ -283,17 +284,43 @@ impl HybridRetriever {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.unit_id.cmp(&b.unit_id))
         });
-        scored_hits.truncate(limit);
-
         // Snippets last: extracting one scans the unit's text, and doing it for
         // every candidate only to discard most of them cost about six times the
-        // whole search.
-        for hit in &mut scored_hits {
+        // whole search. So the ranking is walked only until `limit` distinct
+        // snippets are held, rather than snippets being taken for a fixed slice.
+        //
+        // Distinct, because sections of one document do repeat a passage - a
+        // definition restated, boilerplate reprinted per chapter, a legal formula
+        // recited per article - and the same text under two section headings
+        // spends the caller's context on what it already has. Measured over 8
+        // queries against four public documents (the PostgreSQL 17 manual, C++
+        // working draft N4950, NIST SP 800-53r5 and the consolidated Spanish
+        // criminal code), 13% of returned snippet bytes were text already present
+        // in another hit of the same answer, reaching 4 hits carrying 2 distinct
+        // passages on one query.
+        //
+        // The scan is bounded: a corpus where nearly every unit repeats the same
+        // passage would otherwise pay the full snippet cost this ordering exists
+        // to avoid, and past this many candidates the ranking has stopped being
+        // worth reading anyway.
+        let scan_limit = limit.saturating_mul(4);
+        let mut kept: Vec<HybridSearchHit> = Vec::with_capacity(limit);
+        let mut seen: HashSet<String> = HashSet::with_capacity(limit);
+        for mut hit in scored_hits.into_iter().take(scan_limit) {
+            if kept.len() >= limit {
+                break;
+            }
             let (snippet, page) = self.bm25.snippet_for(hit.unit_index, &profile_terms);
+            // An empty snippet carries no text to repeat, so it is not deduplicated:
+            // two units that yield none are still two different sections.
+            if !snippet.is_empty() && !seen.insert(snippet.clone()) {
+                continue;
+            }
             hit.snippet = snippet;
             hit.snippet_page = page;
+            kept.push(hit);
         }
 
-        Ok(scored_hits)
+        Ok(kept)
     }
 }

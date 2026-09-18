@@ -308,7 +308,9 @@ impl DocuGraphServer {
 
         // Reuses the cached hybrid index rather than building a second lexical one.
         let retriever = self.retrievers.get_or_build(&docs);
-        let hits = retriever.bm25().search(&params.0.query, limit);
+        // Admission-gated, like every other retrieval tool here: an empty list is
+        // this server's answer to a question its corpus does not cover.
+        let hits = retriever.bm25().search_admitted(&params.0.query, limit);
         Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
     }
 

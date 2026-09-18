@@ -957,3 +957,89 @@ fn test_question_words_do_not_block_a_covered_query() {
         .expect("the question words must not veto a covered topic");
     assert!(!hits.is_empty());
 }
+
+/// The same passage must not be returned twice under two section headings.
+///
+/// A document restates text - a definition repeated per chapter, a legal formula
+/// recited per article, boilerplate reprinted in every appendix - and those
+/// restatements are separate units that score alike, so a ranking puts them
+/// side by side. Returning all of them spends the caller's context on text it
+/// already holds, which is the one cost this server exists to lower. Measured
+/// over 8 queries against four public documents, 13% of returned snippet bytes
+/// were text already present in another hit of the same answer, with one query
+/// returning 4 hits carrying 2 distinct passages.
+#[test]
+fn test_repeated_passages_are_returned_once() {
+    const BOILERPLATE: &str = "zeta kappa omega clause repeated verbatim in every annex";
+
+    let mut doc = Document::new(DocumentMetadata {
+        id: "repeats".to_string(),
+        title: "Spec".to_string(),
+        total_pages: 12,
+        content_hash: "hash-repeats".to_string(),
+        indexed_at: "2026-01-01T00:00:00Z".to_string(),
+        ..Default::default()
+    });
+    for p in 1..=12u32 {
+        doc.add_page(Page::new(p, BOILERPLATE));
+        doc.sections.push(SectionNode {
+            id: format!("annex-{p}"),
+            title: format!("Annex {p}"),
+            level: 1,
+            page_start: p,
+            page_end: p,
+            parent_id: None,
+            children: Vec::new(),
+            content_preview: String::new(),
+        });
+    }
+
+    let retriever = HybridRetriever::build(&[doc], None);
+    let hits = retriever
+        .search("zeta kappa omega clause", 5, &HybridWeights::DEFAULT)
+        .expect("every term is in the corpus, so this is evidence");
+
+    let distinct: std::collections::HashSet<&str> =
+        hits.iter().map(|h| h.snippet.as_str()).collect();
+    assert_eq!(
+        distinct.len(),
+        hits.len(),
+        "each returned snippet must be text the caller does not already have: {:#?}",
+        hits.iter()
+            .map(|h| (&h.unit_id, &h.snippet))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The lexical tool must abstain on the same queries as every other one.
+///
+/// Regression: `document_search` called the raw BM25 ranking, which always has a
+/// top result. For a question the corpus does not answer, its list of least bad
+/// passages is indistinguishable from a list of right ones, so the retrieval
+/// tool with the plainest name was the only entry point that could not abstain -
+/// and the one place a reader could have shown the guarantee did not hold.
+#[test]
+fn test_lexical_search_abstains_like_the_rest() {
+    let doc = doc_with_rare_terms("spec", 12, &["zeta", "kappa", "omega"]);
+    let index = Bm25Index::build_from_documents(&[doc], None);
+
+    let covered = index.search_admitted("zeta kappa omega", 5);
+    assert!(
+        !covered.is_empty(),
+        "a query whose terms are all in the corpus is still evidence"
+    );
+
+    // One term the corpus does have, carrying almost no information, and three it
+    // does not. This is the shape the gate exists for: the raw ranking finds the
+    // common word and reports passages, while the query as asked is uncovered.
+    const UNCOVERED: &str = "receta paella valenciana texto";
+
+    assert!(
+        !index.search(UNCOVERED, 5).is_empty(),
+        "the ungated ranking finds the one common term, which is what makes an          uncovered question look answered"
+    );
+    assert!(
+        index.search_admitted(UNCOVERED, 5).is_empty(),
+        "a question this corpus does not answer must return nothing, not the          passages that happen to share a filler word"
+    );
+}

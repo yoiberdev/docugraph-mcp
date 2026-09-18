@@ -166,3 +166,99 @@ fn test_non_finite_coordinates_degrade_to_single_column() {
         "a page with no usable geometry cannot have columns detected on it"
     );
 }
+
+/// A page carrying many pieces of hidden text must be annotated in bounded time.
+///
+/// Regression: the annotator rewrote the whole page once per snippet, wrapping
+/// each match in a marker that still contained the matched text. Every later
+/// snippet then matched inside what the previous rewrite had emitted, as did any
+/// snippet that was a substring of a marker already inserted, so the page grew by
+/// a factor on each pass. NIST SP 800-53r5 reports 545 hidden snippets on one
+/// page: ingesting it grew that page until the process aborted on a 12.3 GB
+/// allocation, twelve minutes in. The same document now ingests in 2.4 s.
+#[test]
+fn test_many_hidden_snippets_do_not_amplify_the_page() {
+    use lopdf::Stream;
+    use lopdf::content::{Content, Operation};
+
+    let mut doc = LopdfDoc::with_version("1.7");
+
+    let mut font = Dictionary::new();
+    font.set("Type", Object::Name(b"Font".to_vec()));
+    font.set("Subtype", Object::Name(b"Type1".to_vec()));
+    font.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    let font_id = doc.add_object(Object::Dictionary(font));
+    let mut fonts = Dictionary::new();
+    fonts.set("F1", Object::Reference(font_id));
+    let mut resources = Dictionary::new();
+    resources.set("Font", Object::Dictionary(fonts));
+
+    let mut ops = vec![Operation::new("BT", vec![])];
+    // Render mode 3 is invisible, which is what marks this text as hidden.
+    ops.push(Operation::new("Tr", vec![Object::Integer(3)]));
+    ops.push(Operation::new(
+        "Tf",
+        vec![Object::Name(b"F1".to_vec()), Object::Real(12.0)],
+    ));
+    // Nested snippets: each one is a prefix of the next, which is the shape that
+    // made every pass match inside the markers left by the pass before it.
+    for i in 0..400 {
+        ops.push(Operation::new(
+            "Td",
+            vec![Object::Real(72.0), Object::Real(700.0 - (i % 50) as f32)],
+        ));
+        let payload = "ab".repeat(1 + i % 12);
+        ops.push(Operation::new(
+            "Tj",
+            vec![Object::String(payload.into_bytes(), StringFormat::Literal)],
+        ));
+    }
+    ops.push(Operation::new("ET", vec![]));
+    let body = Content { operations: ops }.encode().expect("encode");
+    let content_id = doc.add_object(Object::Stream(Stream::new(Dictionary::new(), body)));
+
+    let mut page = Dictionary::new();
+    page.set("Type", Object::Name(b"Page".to_vec()));
+    page.set(
+        "MediaBox",
+        Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(612.0),
+            Object::Real(792.0),
+        ]),
+    );
+    page.set("Resources", Object::Dictionary(resources));
+    page.set("Contents", Object::Reference(content_id));
+
+    let pages_id = doc.new_object_id();
+    page.set("Parent", Object::Reference(pages_id));
+    let page_id = doc.add_object(Object::Dictionary(page));
+    let mut pages = Dictionary::new();
+    pages.set("Type", Object::Name(b"Pages".to_vec()));
+    pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+    pages.set("Count", Object::Integer(1));
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let mut catalog = Dictionary::new();
+    catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+    catalog.set("Pages", Object::Reference(pages_id));
+    let catalog_id = doc.add_object(Object::Dictionary(catalog));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("amplifying.pdf");
+    doc.save(&path).expect("save");
+
+    // Completing at all is the test: the unfixed code did not return here.
+    let parsed = docugraph::document::load_pdf_from_path(&path).expect("the page is parseable");
+
+    let page_text_len: usize = parsed.pages.iter().map(|p| p.text.len()).sum();
+    assert!(
+        page_text_len < 1_000_000,
+        "annotating hidden text must not amplify the page: {page_text_len} bytes"
+    );
+    assert!(
+        parsed.pages.iter().any(|p| p.untrusted_text_detected),
+        "the hidden text must still be reported, whichever way it was annotated"
+    );
+}
