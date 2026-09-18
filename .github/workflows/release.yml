@@ -31,18 +31,24 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             binary: docugraph.exe
+            native: true
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             binary: docugraph
+            native: true
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             binary: docugraph
+            native: true
+          # GitHub retired the Intel macOS image, so this slice is cross-compiled
+          # from Apple Silicon against the universal SDK rather than built natively.
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             binary: docugraph
           - target: aarch64-apple-darwin
             os: macos-latest
             binary: docugraph
+            native: true
 
     steps:
       - name: Checkout repository
@@ -67,11 +73,20 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      # A binary that cannot answer `--version` is not worth publishing, and this
-      # catches a cross-compiled artifact that will not run on its own host.
+      # A binary that cannot answer `--version` is not worth publishing. Only the
+      # slices whose architecture matches their runner can be asked here; a
+      # cross-compiled one is left to the checksum and the `file` output below.
       - name: Smoke test the binary
-        if: matrix.target != 'aarch64-apple-darwin' || runner.arch == 'ARM64'
+        if: matrix.native
         run: target/${{ matrix.target }}/release/${{ matrix.binary }} --version
+
+      # The one check available for a slice that cannot be executed here: that it
+      # was actually linked for the architecture it claims.
+      - name: Verify cross-compiled architecture
+        if: ${{ !matrix.native }}
+        run: |
+          file "target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          file "target/${{ matrix.target }}/release/${{ matrix.binary }}" | grep -q 'x86_64'
 
       - name: Package
         shell: bash
