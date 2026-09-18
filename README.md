@@ -56,16 +56,14 @@ NIST SP 800-53r5, the consolidated Spanish criminal code, and <em>Operating Syst
 Pieces</em>. 6,576 pages, 4.96 million tokens. Every number is reproducible, see
 <a href="#measured">Measured</a>.</sub>
 
-## It knows when it does not know
+## It can say "no evidence" — within limits you should read
 
-This is the part most retrieval systems do not have.
+Most retrieval systems cannot refuse. A vector search returns `k` results whatever you ask it, so
+a question the document does not cover comes back as the least bad passages, ranked, formatted,
+and indistinguishable from real answers. Your agent then reasons over them.
 
-A vector search always returns `k` results. Ask it something the document does not cover and it
-returns the least bad passages, ranked, formatted, and indistinguishable from real answers. Your
-agent then reasons over them.
-
-DocuGraph measures how much of your question's *information* a passage actually carries, using
-IDF against the corpus itself, and refuses when nothing clears the bar:
+DocuGraph measures how much of your question's *information* a passage carries, using IDF against
+the corpus, and refuses when nothing clears the bar:
 
 ```
 > "what is the recommended dose of ibuprofen"
@@ -74,9 +72,14 @@ No evidence in the indexed corpus.
 Terms absent from every document: ibuprofen, dose, recommended
 ```
 
-There is no threshold to tune and no constant to recalibrate per document. The bar is the mean
-information of your own query terms, so asking about something the corpus lacks raises it rather
-than lowering it.
+**This works for off-domain questions and does not yet work for adjacent ones.** Measured against
+[15 labelled questions](benchmarks/) that no indexed document answers, over a five-document
+corpus: **0 of 15 correctly refused**. Asking a database manual about MySQL tuning, or a legal
+code about a different statute, currently returns passages rather than a refusal, because the
+shared technical vocabulary clears the bar.
+
+The mechanism is real and the limit is real. Both are measured, and the benchmark that measures
+them ships in this repository so you can check either one.
 
 ## How it compares
 
@@ -88,7 +91,7 @@ The honest version: this is a deployment-and-provenance tool, not a smarter embe
 | Needs an API key | **no** | yes | usually | n/a |
 | Works offline | **yes** | no | depends | no |
 | LLM calls per query | **0** | 1+ | 0-1 | n/a |
-| Says "no evidence" | **yes** | no | no | no |
+| Says "no evidence" | **partly** (see above) | no | no | no |
 | Exact page citation | **yes** | varies | rarely | no |
 | Install | **one binary** | npm + account | server + model | built in |
 | Handles a 3,000-page PDF | **yes** | yes | yes | no |
@@ -184,8 +187,9 @@ Everything above, reproducible on your machine. No number here comes from a synt
 | Index the PostgreSQL manual | 9.5 s | 3,100 pages |
 | Index NIST SP 800-53r5 | 2.4 s | 492 pages |
 | Repeated snippets returned | 0% | was 13% before dedup |
-| Retrieval, document's own vocabulary | 4/4 | labelled questions |
-| Retrieval, paraphrased questions | 5/6 | labelled questions |
+| Answer in the top 3 | 15/40 (38%) | [labelled set](benchmarks/), 5 documents |
+| Wrongly refused a covered question | 0/40 (0%) | same |
+| Correctly refused an uncovered one | 0/15 (0%) | same |
 | Tool schema cost | 1,907 tokens | real `tools/list` over stdio |
 
 Corpus:
@@ -209,9 +213,19 @@ vocabulary, **5/6** when it is paraphrased, and the miss landed in an adjacent c
 embedding model would do better on paraphrase, and would cost the single binary, the offline
 guarantee and the absence of model weights. That is the trade this project has chosen.
 
-**Abstention is not a correctness check.** It catches *"the corpus does not cover this."* It does
-not catch *"the corpus covers this, elsewhere."* A confident wrong answer drawn from an adjacent
-section is still possible.
+**Abstention does not survive a hard test: the number is 0 of 15.** It catches questions with no vocabulary in
+common with the corpus. It does not catch a question from an adjacent domain, and it does not
+catch *"the corpus covers this, elsewhere"* either. The bar is the mean information of the query
+terms, so a question sharing ordinary technical words with the corpus clears it even when nothing
+it actually asked about is there. Raising the bar until it refuses those also refuses real
+questions: at the setting that refuses 8 of 15, it wrongly refuses 6 of 40 covered ones, which is
+the worse error. This is an open problem in the project, not a solved one.
+
+**Retrieval finds the answer in the top 3 for 38% of a labelled set.** That is measured over 40
+deliberately paraphrased questions across five documents, where the engine must pick the right
+document *and* the right section out of 8,780. Easier phrasings do much better — questions using
+the document's own vocabulary scored 4/4 in a smaller test — but 38% is the honest number for
+questions asked the way people actually ask them.
 
 **Indexing is a separate step.** By design, but it does mean a two-step setup rather than just
 pointing an agent at a folder.

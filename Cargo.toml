@@ -31,6 +31,10 @@ miniz_oxide = "0.8"
 [dev-dependencies]
 tempfile = "3.17"
 
+# The labelled benchmark reads its question set from disk.
+[[example]]
+name = "labelled_eval"
+
 [profile.release]
 opt-level = 3
 lto = true

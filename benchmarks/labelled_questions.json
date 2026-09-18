@@ -1,0 +1,427 @@
+{
+  "description": "Labelled questions over five public documents, for measuring retrieval accuracy and abstention. Answerable questions carry the page range where the answer lives, taken from the document’s own outline. Unanswerable ones are covered by no document in the corpus.",
+  "answerable": [
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "My events table has grown to 400 million rows and even a query for last week scans the whole thing. How do I split it by month so the planner only touches the relevant chunk, and what are the tradeoffs when I do?",
+      "expected_page_start": 133,
+      "expected_page_end": 147,
+      "grounded_in": "5.12. Table Partitioning",
+      "paraphrased": true
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "My index-only scan still shows heap fetches in the plan. Why does it go back to the table at all, and what makes those fetches go away?",
+      "expected_page_start": 497,
+      "expected_page_end": 498,
+      "grounded_in": "11.9. Index-Only Scans and Covering Indexes",
+      "paraphrased": false
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "If I run the same SELECT twice inside one open transaction, can the second one see rows another session committed in between, and how do I stop that from happening?",
+      "expected_page_start": 545,
+      "expected_page_end": 551,
+      "grounded_in": "13.2. Transaction Isolation",
+      "paraphrased": true
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "What do the cost=0.00..458.00 and rows= numbers in EXPLAIN ANALYZE output actually mean, and why is the estimated row count so far off from the real one?",
+      "expected_page_start": 561,
+      "expected_page_end": 574,
+      "grounded_in": "14.1. Using EXPLAIN",
+      "paraphrased": false
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "psql works fine when I log in on the server itself, but connections from my app machine are refused. Which config file decides which client machines and users are allowed in, and how is a line in it structured?",
+      "expected_page_start": 749,
+      "expected_page_end": 757,
+      "grounded_in": "20.1. The pg_hba.conf File",
+      "paraphrased": true
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "Sorting the same text column gives a different order on my laptop than on the production box. How do I pin one specific ordering to a column or to a single query?",
+      "expected_page_start": 791,
+      "expected_page_end": 801,
+      "grounded_in": "23.2. Collation Support",
+      "paraphrased": true
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "A developer dropped a production table at 3pm. What do I need to have set up beforehand so I can bring the cluster back to exactly how it looked one minute earlier?",
+      "expected_page_start": 827,
+      "expected_page_end": 839,
+      "grounded_in": "25.3. Continuous Archiving and Point-in-Time Recovery (PITR)",
+      "paraphrased": true
+    },
+    {
+      "document": "postgresql",
+      "document_title": "PostgreSQL 17.11 Documentation",
+      "question": "I only want the records belonging to one tenant to reach the downstream subscriber instead of the whole table. Can a publication apply a WHERE condition, and what happens on UPDATE when a record stops matching it?",
+      "expected_page_start": 940,
+      "expected_page_end": 948,
+      "grounded_in": "29.4. Row Filters",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "How do I embed a Windows path with backslashes and embedded quotes in my source code without escaping every single character?",
+      "expected_page_start": 36,
+      "expected_page_end": 38,
+      "grounded_in": "5.13.5 String literals",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "Why does calling swap(a, b) with no namespace qualifier still find the right function for a type defined in another namespace?",
+      "expected_page_start": 59,
+      "expected_page_end": 61,
+      "grounded_in": "6.5.4 Argument-dependent name lookup",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "If two threads write to different members of the same struct at the same time with no mutex, is my program broken or is that guaranteed safe?",
+      "expected_page_start": 95,
+      "expected_page_end": 100,
+      "grounded_in": "6.9.2 Multi-threaded executions and data races",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "When my function body contains co_await, what must the returned type provide and how is the body rewritten by the compiler?",
+      "expected_page_start": 238,
+      "expected_page_end": 241,
+      "grounded_in": "9.5.4 Coroutine definitions",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "Where am I allowed to keep #include of old C headers in a file that starts with 'export module', so those declarations still work?",
+      "expected_page_start": 271,
+      "expected_page_end": 272,
+      "grounded_in": "10.4 Global module fragment",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "When is the compiler permitted to skip calling the copy constructor for a local variable returned by value, even if that constructor has side effects?",
+      "expected_page_start": 333,
+      "expected_page_end": 335,
+      "grounded_in": "11.9.6 Copy/move elision",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "Two of my overloads both accept the call — what rules decide which one wins, and when does the compiler declare it ambiguous instead?",
+      "expected_page_start": 353,
+      "expected_page_end": 365,
+      "grounded_in": "12.2.4 Best viable function",
+      "paraphrased": true
+    },
+    {
+      "document": "cpp",
+      "document_title": "C++ Working Draft",
+      "question": "How can I make one template behave differently whenever its argument is a pointer, without writing a separate version for every pointer type?",
+      "expected_page_start": 403,
+      "expected_page_end": 407,
+      "grounded_in": "13.7.6 Partial specialization",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "In the catalog entries, what do the bracketed \"Assignment\" and \"Selection\" placeholders actually mean, and how is a numbered sub-item under a base control different from the base control itself?",
+      "expected_page_start": 35,
+      "expected_page_end": 37,
+      "grounded_in": "2.2   CONTROL STRUCTURE AND ORGANIZATION",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "How many consecutive bad password tries should our sign-in endpoint tolerate before it locks the account, and what is supposed to happen once the lockout kicks in?",
+      "expected_page_start": 66,
+      "expected_page_end": 66,
+      "grounded_in": "AC-7 UNSUCCESSFUL LOGON ATTEMPTS",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "How far back do we need to be able to produce historical log entries for an after-the-fact investigation before we're allowed to delete them?",
+      "expected_page_start": 104,
+      "expected_page_end": 104,
+      "grounded_in": "AU-11 AUDIT RECORD RETENTION",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "Where are the rules about handing out initial passwords, minimum complexity, and forcing a change after a set number of days?",
+      "expected_page_start": 165,
+      "expected_page_end": 169,
+      "grounded_in": "IA-5 AUTHENTICATOR MANAGEMENT",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "Someone pasted restricted data into a system that isn't cleared to hold it. What steps is the organization required to take to clean that up afterward?",
+      "expected_page_start": 186,
+      "expected_page_end": 189,
+      "grounded_in": "IR-9 INFORMATION SPILLAGE RESPONSE",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "Before we ship retired laptop drives back to the leasing company, what has to be done to them so nothing stored on them can be recovered?",
+      "expected_page_start": 201,
+      "expected_page_end": 202,
+      "grounded_in": "MP-6 MEDIA SANITIZATION",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "When we issue a purchase order for a new system, what has to be written into the contract terms — functional specs, design documentation, and the like?",
+      "expected_page_start": 279,
+      "expected_page_end": 282,
+      "grounded_in": "SA-4 ACQUISITION PROCESS",
+      "paraphrased": true
+    },
+    {
+      "document": "nist",
+      "document_title": "Security and Privacy Controls for Information Systems and Organizations",
+      "question": "Which control covers firewalls, putting public-facing servers in a DMZ, and capping the number of external network connections?",
+      "expected_page_start": 324,
+      "expected_page_end": 330,
+      "grounded_in": "SC-7  BOUNDARY PROTECTION",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "Un comercial de mi empresa paga una comisión irregular para ganar un concurso público, ¿puede acabar condenada la propia sociedad y sirve de algo haber implantado controles internos antes de los hechos?",
+      "expected_page_start": 17,
+      "expected_page_end": 18,
+      "grounded_in": "Artículo 31 bis.",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "Alguien entra de noche en mi casa y le causo lesiones al echarlo, o actúo bajo un brote psicótico: ¿en qué supuestos no se castiga a quien realiza el hecho?",
+      "expected_page_start": 14,
+      "expected_page_end": 15,
+      "grounded_in": "CAPÍTULO II. De las causas que eximen de la responsabilidad criminal",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "¿De qué depende la cuota diaria que se fija al condenado según sus ingresos, y qué le pasa si no llega a pagarla?",
+      "expected_page_start": 26,
+      "expected_page_end": 27,
+      "grounded_in": "Sección 4.ª De la pena de multa",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "A mi cliente le han impuesto cinco condenas que sumadas pasan de 40 años; ¿existe un tope de años que efectivamente acabe pasando en prisión?",
+      "expected_page_start": 33,
+      "expected_page_end": 33,
+      "grounded_in": "Artículo 76.",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "Es la primera condena de mi cliente y son 18 meses de cárcel: ¿puede evitar el ingreso efectivo y qué obligaciones le pueden imponer a cambio?",
+      "expected_page_start": 35,
+      "expected_page_end": 39,
+      "grounded_in": "Sección 1.ª De la suspensión de la ejecución de las penas privativas de libertad",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "¿Cuántos años tienen que transcurrir desde los hechos para que ya no se pueda abrir causa por una conducta castigada con tres años de prisión?",
+      "expected_page_start": 57,
+      "expected_page_end": 57,
+      "grounded_in": "Artículo 131.",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "¿Qué castigo tiene captar y trasladar a personas engañándolas con una oferta de trabajo para después explotarlas o forzarlas a mendigar?",
+      "expected_page_start": 74,
+      "expected_page_end": 76,
+      "grounded_in": "TÍTULO VII bis. De la trata de seres humanos",
+      "paraphrased": true
+    },
+    {
+      "document": "penal",
+      "document_title": "Ley Orgánica 10/1995, de 23 de noviembre, del Código Penal.",
+      "question": "Un pentester entra en el servidor de un cliente sin contrato firmado y solo mira, sin copiar ni borrar nada: ¿eso ya es punible?",
+      "expected_page_start": 85,
+      "expected_page_end": 85,
+      "grounded_in": "Artículo 197 bis.",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "If a user program never makes a system call and just spins in an infinite loop, how does the kernel ever take the processor away from it again?",
+      "expected_page_start": 86,
+      "expected_page_end": 89,
+      "grounded_in": "Problem #2: Switching Between Processes",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "On our box the long-running batch jobs stop getting any CPU at all once interactive work shows up. Is there a standard trick to periodically give every job another chance at the top?",
+      "expected_page_start": 112,
+      "expected_page_end": 112,
+      "grounded_in": "Attempt #2: The Priority Boost",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "My C program's memory footprint keeps growing until the OOM killer takes it, and it sometimes segfaults on a pointer I already released. What are the classic heap-allocation mistakes behind that?",
+      "expected_page_start": 158,
+      "expected_page_end": 160,
+      "grounded_in": "Common Errors",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "When the kernel switches from one process to another, what stops the new process from reusing the cached virtual-to-physical mappings left behind by the old one?",
+      "expected_page_start": 226,
+      "expected_page_end": 227,
+      "grounded_in": "TLB Issue: Context Switches",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "A flat per-process translation table burns megabytes even when almost all of the address space is empty. How can the table itself be allocated in chunks on demand so that empty regions cost nothing at all?",
+      "expected_page_start": 241,
+      "expected_page_end": 247,
+      "grounded_in": "Multi-level Page Tables",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "Two of my worker threads are frozen forever, each one holding a mutex the other is waiting on. What conditions have to be true for that to happen, and how do I stop it?",
+      "expected_page_start": 399,
+      "expected_page_end": 405,
+      "grounded_in": "Deadlock Bugs",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "How do I work out roughly how many megabytes per second a spinning drive will give me for a stream of tiny scattered reads versus one large contiguous transfer?",
+      "expected_page_start": 444,
+      "expected_page_end": 447,
+      "grounded_in": "I/O Time: Doing The Math",
+      "paraphrased": true
+    },
+    {
+      "document": "ostep",
+      "document_title": "IS277  Operating Systems_ Three Easy Pieces",
+      "question": "In a parity-protected disk array, why does modifying just one block force extra reads and writes of a second block, and how does that cap small-update throughput?",
+      "expected_page_start": 466,
+      "expected_page_end": 469,
+      "grounded_in": "RAID Level 4: Saving Space With Parity",
+      "paraphrased": true
+    }
+  ],
+  "unanswerable": [
+    {
+      "question": "In MySQL 8, how large should I set innodb_buffer_pool_size on a write-heavy server with 64 GB of RAM?",
+      "why_uncovered": "Vocabulary trap: the PostgreSQL 17 manual documents shared_buffers, work_mem and checkpoint tuning for write-heavy loads, and OSTEP discusses buffer caches, but neither documents MySQL or InnoDB. No document in the corpus describes any MySQL variable. The nearest passage (PostgreSQL 'Resource Consumption') is the least-bad-passage trap, not an answer."
+    },
+    {
+      "question": "Which Redis maxmemory-policy should I pick for a cache that also holds a job queue I cannot afford to drop?",
+      "why_uncovered": "Vocabulary trap: OSTEP covers LRU/clock replacement policies and PostgreSQL covers buffer eviction, so 'eviction policy' matches strongly, but Redis, maxmemory-policy and allkeys-lru appear in none of the five documents. C++, NIST 800-53 and the Spanish penal code are unrelated."
+    },
+    {
+      "question": "How do I run several Python coroutines concurrently with asyncio.gather and cancel the rest when one exceeds its timeout?",
+      "why_uncovered": "Vocabulary trap: N4950 specifies C++ coroutines (co_await, promise types) and OSTEP covers concurrency and cancellation-like synchronization, so 'coroutines' and 'concurrently' both hit, but Python and asyncio are absent from the entire corpus."
+    },
+    {
+      "question": "Why does Rust's borrow checker reject handing an &mut reference to a spawned thread unless the type is Send?",
+      "why_uncovered": "Vocabulary trap: N4950 defines C++'s data-race and memory model and OSTEP explains shared-memory threading hazards, so the underlying concept is adjacent, but Rust, borrow checking, lifetimes and the Send/Sync traits are documented nowhere in the five documents."
+    },
+    {
+      "question": "When is ZGC a better choice than G1 for a JVM service with a 200 GB heap and a 10 ms pause budget?",
+      "why_uncovered": "Vocabulary trap: OSTEP covers memory management, free-space allocation and paging, and C++23 (N4950) removed even its garbage-collection support API, so 'heap' and 'collector' match loosely. No document covers the JVM or any specific garbage collector implementation."
+    },
+    {
+      "question": "What does a least-privilege AWS IAM policy look like for an S3 bucket that only receives audit logs and is never read back?",
+      "why_uncovered": "Vocabulary trap: NIST SP 800-53r5 defines AC-6 (Least Privilege) and the whole AU audit-logging family, so the terms 'least privilege' and 'audit log' match hard, but 800-53 states control requirements, not AWS IAM JSON policies or S3 configuration. No AWS documentation exists in the corpus."
+    },
+    {
+      "question": "GDPR Article 33 gives 72 hours to notify a breach - does that clock start at detection or at confirmation of the incident?",
+      "why_uncovered": "Vocabulary trap: NIST SP 800-53r5 has IR-6 incident reporting and the PT privacy family, with organization-defined reporting timeframes, so 'breach notification' matches. The GDPR text and its 72-hour rule are not in 800-53r5, and the Spanish document is the criminal code, not data-protection regulation."
+    },
+    {
+      "question": "Which TLS 1.3 cipher suites should I put in my nginx ssl_ciphers directive to pass a PCI DSS scan?",
+      "why_uncovered": "Vocabulary trap: NIST SP 800-53r5 requires cryptographic protection (SC-8, SC-13) and PostgreSQL documents ssl settings for the server, but no document lists TLS 1.3 cipher suites, contains nginx directives, or covers PCI DSS requirements."
+    },
+    {
+      "question": "For running a replicated database on Kubernetes, is a StatefulSet with a headless service better than a Deployment with a PersistentVolumeClaim?",
+      "why_uncovered": "The PostgreSQL 17 manual covers streaming and logical replication in depth, which will pull strong matches on 'replicated database', but Kubernetes, StatefulSets, Deployments and PVCs appear in none of the five documents."
+    },
+    {
+      "question": "How do I set up a GitHub Actions matrix build that compiles my project against GCC 13, Clang 17 and MSVC 19.4?",
+      "why_uncovered": "N4950 defines the C++ language and library but says nothing about specific toolchains, build systems or CI services; GitHub Actions and compiler vendor releases are absent from all five documents."
+    },
+    {
+      "question": "What chunk size and overlap should I use when embedding a large PDF manual for vector search?",
+      "why_uncovered": "A plausible question for a document assistant, but the corpus is the subject matter (a DB manual, a language standard, a controls catalog, a penal code, an OS textbook), not documentation about retrieval pipelines. The PostgreSQL 17 core manual has no pgvector or embeddings chapter."
+    },
+    {
+      "question": "What PromQL alerting rule catches a slow memory leak before the kernel OOM-killer terminates the process?",
+      "why_uncovered": "Vocabulary trap: OSTEP explains virtual memory, resident set size and swapping, and C++ covers allocation and leaks conceptually, so 'memory leak' matches. Prometheus, PromQL and alerting rules are not documented anywhere in the corpus."
+    },
+    {
+      "question": "¿Cuántos días de salario por año trabajado corresponden como indemnización por despido improcedente según el Estatuto de los Trabajadores?",
+      "why_uncovered": "Trampa de vocabulario en español: el Código Penal tipifica los delitos contra los derechos de los trabajadores (arts. 311 y ss.), por lo que 'trabajadores' coincide con fuerza, pero el Estatuto de los Trabajadores y las indemnizaciones por despido son derecho laboral y no figuran en ninguno de los cinco documentos."
+    },
+    {
+      "question": "¿Qué plazo concede la Ley de Enjuiciamiento Civil para contestar a la demanda en un juicio ordinario y cómo se computa?",
+      "why_uncovered": "Trampa de vocabulario en español: el Código Penal consolidado es derecho sustantivo (delitos, penas, prescripción) y no contiene normas procesales; los plazos de la LEC, la demanda y el juicio ordinario no aparecen en el corpus. Los otros cuatro documentos son técnicos y en inglés."
+    },
+    {
+      "question": "¿Cómo configuro un replica set de MongoDB con miembros en varias regiones y qué write concern debería usar?",
+      "why_uncovered": "Doble trampa: está en español (como el Código Penal, que no trata de bases de datos) y usa vocabulario de replicación que coincide con los capítulos de replicación en streaming y lógica del manual de PostgreSQL 17. MongoDB, los replica sets y el write concern no aparecen en ningún documento del corpus."
+    }
+  ]
+}
