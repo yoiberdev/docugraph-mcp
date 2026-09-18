@@ -1,8 +1,5 @@
 use docugraph::document::model::{Document, DocumentMetadata};
-use docugraph::mcp::{
-    DocuGraphServer,
-    tools::{DocumentInfoParams, PingParams},
-};
+use docugraph::mcp::{DocuGraphServer, tools::DocumentInfoParams};
 use docugraph::storage::DocumentStore;
 use rmcp::{ServerHandler, handler::server::wrapper::Parameters};
 
@@ -25,23 +22,73 @@ async fn test_server_info_and_capabilities() {
     assert!(info.instructions.is_some());
 }
 
-#[tokio::test]
-async fn test_document_ping_tool() {
-    let server = in_memory_server();
+/// The published tool surface, pinned, as a client over stdio actually sees it.
+///
+/// This server argues that an agent should spend few tokens, and every tool it
+/// declares is spent in every session before a single question is asked: 15 tools
+/// cost 2509 tokens of schema, which is the argument paying for itself in reverse.
+/// Merging the four query tools into `document_query` and the three extractors
+/// into `document_extract`, and dropping `document_ping`, brought that to 1907.
+///
+/// Pinning the list here is what stops it growing back one convenience at a time.
+#[test]
+fn test_tool_surface_is_the_published_one() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
-    // Default ping message
-    let resp = server
-        .document_ping(Parameters(PingParams { message: None }))
-        .await;
-    assert!(resp.starts_with("pong: DocuGraph MCP is alive"));
+    const PUBLISHED: [&str; 9] = [
+        "document_extract",
+        "document_get_section",
+        "document_info",
+        "document_list",
+        "document_outline",
+        "document_query",
+        "document_read_attachment",
+        "document_read_pages",
+        "document_render_page",
+    ];
 
-    // Custom echo message
-    let custom = server
-        .document_ping(Parameters(PingParams {
-            message: Some("hello agent".to_string()),
-        }))
-        .await;
-    assert_eq!(custom, "pong: hello agent");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_docugraph"))
+        .arg("serve")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the server binary must start");
+
+    let stdin = child.stdin.as_mut().expect("stdin");
+    for line in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
+    ] {
+        writeln!(stdin, "{line}").expect("write request");
+    }
+    drop(child.stdin.take());
+
+    let out = child
+        .wait_with_output()
+        .expect("the server must exit on stdin close");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    let listing = stdout
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["id"] == 2)
+        .expect("tools/list must be answered");
+
+    let mut declared: Vec<String> = listing["result"]["tools"]
+        .as_array()
+        .expect("tools array")
+        .iter()
+        .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    declared.sort();
+
+    assert_eq!(
+        declared, PUBLISHED,
+        "the declared tools must be the ones the README documents; every extra one          is schema every session pays for before asking anything"
+    );
 }
 
 #[tokio::test]

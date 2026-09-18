@@ -160,19 +160,6 @@ impl DocuGraphServer {
 
 #[tool_router(router = tool_router)]
 impl DocuGraphServer {
-    /// Ping the DocuGraph MCP server to verify health, latency, and connectivity.
-    #[tool(
-        name = "document_ping",
-        description = "Check server health and verify stdio connectivity."
-    )]
-    pub async fn document_ping(&self, params: Parameters<PingParams>) -> String {
-        let msg = params
-            .0
-            .message
-            .unwrap_or_else(|| "DocuGraph MCP is alive and ready".to_string());
-        format!("pong: {msg}")
-    }
-
     /// List all indexed documents available in the knowledge base.
     #[tool(
         name = "document_list",
@@ -294,51 +281,51 @@ impl DocuGraphServer {
         Ok(serde_json::to_string_pretty(&tree).unwrap_or_else(|_| "[]".to_string()))
     }
 
-    /// Perform fast Okapi BM25 keyword search over document sections and pages.
+    /// Answer a question from the indexed documents, returning only what carries it.
     #[tool(
-        name = "document_search",
-        description = "Fast BM25 keyword search across sections and pages. Returns ranked snippets with citations."
+        name = "document_query",
+        description = "Answer a question from the indexed PDFs with exact page citations, returning only the passages that carry it. Answers \"no evidence\" when the corpus does not cover the question, rather than the closest passages it has."
     )]
-    pub async fn document_search(
+    pub async fn document_query(
         &self,
-        params: Parameters<DocumentSearchParams>,
+        params: Parameters<DocumentQueryParams>,
     ) -> Result<String, String> {
-        let limit = params.0.limit.unwrap_or(5);
+        let query = &params.0.query;
         let docs = self.resolve_scope(params.0.document_id.as_deref())?;
+        let mode = params.0.mode.unwrap_or_default();
+        let max_items = params.0.max_items.unwrap_or(4);
 
-        // Reuses the cached hybrid index rather than building a second lexical one.
-        let retriever = self.retrievers.get_or_build(&docs);
-        // Admission-gated, like every other retrieval tool here: an empty list is
-        // this server's answer to a question its corpus does not cover.
-        let hits = retriever.bm25().search_admitted(&params.0.query, limit);
-        Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
-    }
+        let budget = ContextBudget {
+            max_tokens: params.0.max_tokens.unwrap_or(1200),
+            max_chunks: max_items,
+            compact: true,
+        };
 
-    /// Perform hybrid search (BM25 + Semantic Cosine + Structural Boost) with configurable weights.
-    #[tool(
-        name = "document_search_hybrid",
-        description = "Hybrid search combining keywords (BM25), conceptual semantic similarity, and structural boosts."
-    )]
-    pub async fn document_search_hybrid(
-        &self,
-        params: Parameters<DocumentSearchHybridParams>,
-    ) -> Result<String, String> {
-        let limit = params.0.limit.unwrap_or(5);
-        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
-
-        let weights = HybridWeights {
-            bm25_weight: params.0.bm25_weight.unwrap_or(0.50),
-            semantic_weight: params.0.semantic_weight.unwrap_or(0.30),
-            structural_weight: params.0.structural_weight.unwrap_or(0.20),
+        // The budgeted modes drop candidates while packing, so they ask for more
+        // than they will keep; `hits` returns the ranking itself and asks for what
+        // it was told to return.
+        let wanted = match mode {
+            QueryMode::Hits => max_items,
+            _ => max_items.saturating_mul(2),
         };
 
         let retriever = self.retrievers.get_or_build(&docs);
-        // No evidence is an empty result list, matching document_search's shape.
-        // document_get_evidence is where an agent gets the reason in prose.
-        let hits = retriever
-            .search(&params.0.query, limit, &weights)
-            .unwrap_or_default();
-        Ok(serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string()))
+        // "No evidence" is an answer, not a tool failure, so it is Ok with an
+        // explanation. An unresolvable document_id is an invalid argument and stays Err.
+        match retriever.search(query, wanted, &HybridWeights::DEFAULT) {
+            Ok(hits) => Ok(match mode {
+                QueryMode::Evidence => {
+                    ContextBuilder::build_evidence(query, &hits, budget).to_markdown()
+                }
+                QueryMode::Context => {
+                    ContextBuilder::build_conceptual_context(query, &hits, &docs, budget)
+                }
+                QueryMode::Hits => {
+                    serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".to_string())
+                }
+            }),
+            Err(no_evidence) => Ok(no_evidence.to_markdown()),
+        }
     }
 
     /// Retrieve the full content of a specific section with optional parent context and token budgeting.
@@ -366,60 +353,6 @@ impl DocuGraphServer {
                 "Section '{section_id}' not found in document '{doc_id}'. \
                  Use 'document_outline' to list the section ids of this document."
             )),
-        }
-    }
-
-    /// Retrieve broader surrounding conceptual context for a topic or query across the document graph.
-    #[tool(
-        name = "document_get_context",
-        description = "Retrieve surrounding conceptual context (parent headings, sub-clauses, and related paragraphs) for a query or topic within a token budget."
-    )]
-    pub async fn document_get_context(
-        &self,
-        params: Parameters<DocumentGetContextParams>,
-    ) -> Result<String, String> {
-        let query = &params.0.query;
-        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
-
-        let budget = ContextBudget {
-            max_tokens: params.0.max_tokens.unwrap_or(1500),
-            max_chunks: params.0.max_chunks.unwrap_or(5),
-            compact: true,
-        };
-
-        let retriever = self.retrievers.get_or_build(&docs);
-        match retriever.search(query, budget.max_chunks * 2, &HybridWeights::DEFAULT) {
-            Ok(hits) => Ok(ContextBuilder::build_conceptual_context(
-                query, &hits, &docs, budget,
-            )),
-            Err(no_evidence) => Ok(no_evidence.to_markdown()),
-        }
-    }
-
-    /// Retrieve compact evidence snippets with guaranteed citation provenance for LLM reasoning.
-    #[tool(
-        name = "document_get_evidence",
-        description = "Gather compact, verifiable evidence snippets with exact page and section citations for LLM reasoning."
-    )]
-    pub async fn document_get_evidence(
-        &self,
-        params: Parameters<DocumentGetEvidenceParams>,
-    ) -> Result<String, String> {
-        let query = &params.0.query;
-        let docs = self.resolve_scope(params.0.document_id.as_deref())?;
-
-        let budget = ContextBudget {
-            max_tokens: params.0.max_tokens.unwrap_or(1200),
-            max_chunks: params.0.max_items.unwrap_or(4),
-            compact: true,
-        };
-
-        let retriever = self.retrievers.get_or_build(&docs);
-        // "No evidence" is a valid answer, not a tool failure, so it is Ok with an
-        // explanation. An unresolvable document_id is an invalid argument and stays Err.
-        match retriever.search(query, budget.max_chunks * 2, &HybridWeights::DEFAULT) {
-            Ok(hits) => Ok(ContextBuilder::build_evidence(query, &hits, budget).to_markdown()),
-            Err(no_evidence) => Ok(no_evidence.to_markdown()),
         }
     }
 
@@ -548,11 +481,43 @@ impl DocuGraphServer {
         }
     }
 
-    /// Extract hyperlinks and internal cross-references from a document.
+    /// Pull one structured artifact out of a document.
     #[tool(
-        name = "document_get_links",
-        description = "Extract hyperlinks and internal cross-references from a document with exact page numbers, URLs, and coordinates."
+        name = "document_extract",
+        description = "Extract a structured artifact from a document: links (hyperlinks and cross-references with pages and coordinates), forms (AcroForm fields with names and values), or attachments (embedded files with MIME types and sizes)."
     )]
+    pub async fn document_extract(
+        &self,
+        params: Parameters<DocumentExtractParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        match p.kind {
+            ArtifactKind::Links => {
+                self.document_get_links(Parameters(DocumentGetLinksParams {
+                    document_id: p.document_id,
+                    page: p.page,
+                    kind: p.link_kind,
+                }))
+                .await
+            }
+            ArtifactKind::Forms => {
+                self.document_get_forms(Parameters(DocumentGetFormsParams {
+                    document_id: p.document_id,
+                    page: p.page,
+                    filled_only: p.filled_only,
+                }))
+                .await
+            }
+            ArtifactKind::Attachments => {
+                self.document_get_attachments(Parameters(DocumentGetAttachmentsParams {
+                    document_id: p.document_id,
+                }))
+                .await
+            }
+        }
+    }
+
+    /// Extract hyperlinks and internal cross-references from a document.
     pub async fn document_get_links(
         &self,
         params: Parameters<DocumentGetLinksParams>,
@@ -610,10 +575,6 @@ impl DocuGraphServer {
     }
 
     /// Extract interactive form fields (AcroForms) from a document.
-    #[tool(
-        name = "document_get_forms",
-        description = "Extract interactive AcroForm fields (text inputs, checkboxes, radio buttons, dropdowns) with names, values, and page coordinates."
-    )]
     pub async fn document_get_forms(
         &self,
         params: Parameters<DocumentGetFormsParams>,
@@ -665,10 +626,6 @@ impl DocuGraphServer {
     }
 
     /// Retrieve metadata for all embedded files and attachments inside a document.
-    #[tool(
-        name = "document_get_attachments",
-        description = "List all embedded file attachments (e.g. ZUGFeRD/Factur-X XML, CSV, datasets) with names, MIME types, and sizes."
-    )]
     pub async fn document_get_attachments(
         &self,
         params: Parameters<DocumentGetAttachmentsParams>,

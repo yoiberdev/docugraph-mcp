@@ -3,11 +3,32 @@
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-/// Parameters for `document_ping`.
+/// What `document_query` returns for a question.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryMode {
+    /// Compact snippets with exact page citations. The default, and the cheapest.
+    #[default]
+    Evidence,
+    /// The same passages with their parent headings and sub-clauses around them.
+    Context,
+    /// The ranked list itself, for an agent that will fetch sections on its own.
+    Hits,
+}
+
+/// Parameters for `document_query`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct PingParams {
-    /// Optional message to echo back
-    pub message: Option<String>,
+pub struct DocumentQueryParams {
+    /// The question, claim, or topic to answer from the indexed documents
+    pub query: String,
+    /// Restrict to one document; omit to search every indexed document
+    pub document_id: Option<String>,
+    /// What to return: evidence (default), context, or hits
+    pub mode: Option<QueryMode>,
+    /// Maximum estimated tokens in the response (default: 1200)
+    pub max_tokens: Option<usize>,
+    /// Maximum snippets or results to return (default: 4)
+    pub max_items: Option<usize>,
 }
 
 /// Parameters for `document_info`.
@@ -26,34 +47,6 @@ pub struct DocumentOutlineParams {
     pub max_depth: Option<u32>,
 }
 
-/// Parameters for `document_search`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DocumentSearchParams {
-    /// Search keywords or technical terms
-    pub query: String,
-    /// Optional filter for a specific document ID
-    pub document_id: Option<String>,
-    /// Maximum number of results to return (default: 5)
-    pub limit: Option<usize>,
-}
-
-/// Parameters for `document_search_hybrid`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DocumentSearchHybridParams {
-    /// Conceptual or natural language query
-    pub query: String,
-    /// Optional filter for a specific document ID
-    pub document_id: Option<String>,
-    /// Maximum number of results to return (default: 5)
-    pub limit: Option<usize>,
-    /// Weight for BM25 keyword score (0.0 to 1.0, default: 0.5)
-    pub bm25_weight: Option<f32>,
-    /// Weight for semantic vector similarity (0.0 to 1.0, default: 0.3)
-    pub semantic_weight: Option<f32>,
-    /// Weight for structural heading matches (0.0 to 1.0, default: 0.2)
-    pub structural_weight: Option<f32>,
-}
-
 /// Parameters for `document_get_section`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DocumentGetSectionParams {
@@ -65,32 +58,6 @@ pub struct DocumentGetSectionParams {
     pub include_parent: Option<bool>,
     /// Maximum estimated tokens to return (default: 1500)
     pub max_tokens: Option<usize>,
-}
-
-/// Parameters for `document_get_context`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DocumentGetContextParams {
-    /// Target topic, concept, or section title
-    pub query: String,
-    /// Optional document identifier filter
-    pub document_id: Option<String>,
-    /// Maximum estimated tokens in the response (default: 1500)
-    pub max_tokens: Option<usize>,
-    /// Maximum number of chunks to include (default: 5)
-    pub max_chunks: Option<usize>,
-}
-
-/// Parameters for `document_get_evidence`.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DocumentGetEvidenceParams {
-    /// Claim, assertion, or question to gather verifiable evidence for
-    pub query: String,
-    /// Optional document identifier filter
-    pub document_id: Option<String>,
-    /// Maximum tokens budget for evidence (default: 1200)
-    pub max_tokens: Option<usize>,
-    /// Maximum evidence snippets (default: 4)
-    pub max_items: Option<usize>,
 }
 
 /// Parameters for `document_read_pages`.
@@ -322,6 +289,33 @@ pub struct DocumentGetAttachmentsResult {
     pub document_id: String,
     pub total_attachments: usize,
     pub attachments: Vec<AttachmentSummaryResult>,
+}
+
+/// Which structured artifact `document_extract` pulls out of a document.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    /// Hyperlinks and internal cross-references, with pages and coordinates.
+    Links,
+    /// Interactive AcroForm fields, with names, values and coordinates.
+    Forms,
+    /// Embedded file attachments, with names, MIME types and sizes.
+    Attachments,
+}
+
+/// Parameters for `document_extract`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentExtractParams {
+    /// Document identifier or content hash
+    pub document_id: String,
+    /// Which artifact to extract
+    pub kind: ArtifactKind,
+    /// 1-based page filter, for links and forms
+    pub page: Option<u32>,
+    /// For links: "all", "external" or "internal" (default: "all")
+    pub link_kind: Option<String>,
+    /// For forms: only fields carrying a value (default: false)
+    pub filled_only: Option<bool>,
 }
 
 /// Parameters for `document_read_attachment`.

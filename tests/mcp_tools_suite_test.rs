@@ -83,10 +83,12 @@ async fn test_mcp_document_outline() {
 async fn test_mcp_document_search_bm25() {
     let server = create_test_server();
     let resp = server
-        .document_search(Parameters(DocumentSearchParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales trabajo".to_string(),
             document_id: Some("git-guide".to_string()),
-            limit: Some(3),
+            mode: Some(QueryMode::Hits),
+            max_tokens: None,
+            max_items: Some(3),
         }))
         .await
         .expect("search must succeed for an indexed document_id");
@@ -101,13 +103,12 @@ async fn test_mcp_document_search_bm25() {
 async fn test_mcp_document_search_hybrid() {
     let server = create_test_server();
     let resp = server
-        .document_search_hybrid(Parameters(DocumentSearchHybridParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "fusión y resolución de conflictos".to_string(),
             document_id: None,
-            limit: Some(2),
-            bm25_weight: Some(0.6),
-            semantic_weight: Some(0.2),
-            structural_weight: Some(0.2),
+            mode: Some(QueryMode::Hits),
+            max_tokens: None,
+            max_items: Some(2),
         }))
         .await
         .expect("hybrid search must succeed over the whole corpus");
@@ -140,9 +141,10 @@ async fn test_mcp_document_get_section() {
 async fn test_mcp_document_get_evidence() {
     let server = create_test_server();
     let evidence_md = server
-        .document_get_evidence(Parameters(DocumentGetEvidenceParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: None,
+            mode: Some(QueryMode::Evidence),
             max_tokens: Some(500),
             max_items: Some(2),
         }))
@@ -175,11 +177,12 @@ async fn test_mcp_document_read_pages() {
 async fn test_mcp_document_get_context() {
     let server = create_test_server();
     let context_md = server
-        .document_get_context(Parameters(DocumentGetContextParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales de trabajo".to_string(),
             document_id: Some("git-guide".to_string()),
+            mode: Some(QueryMode::Context),
             max_tokens: Some(600),
-            max_chunks: Some(2),
+            max_items: Some(2),
         }))
         .await
         .expect("context must succeed for an indexed document_id");
@@ -198,10 +201,12 @@ async fn test_mcp_unknown_document_id_is_an_error_not_a_silent_corpus_wide_searc
     let unknown = "libro-inexistente-xyz".to_string();
 
     let search = server
-        .document_search(Parameters(DocumentSearchParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: Some(unknown.clone()),
-            limit: Some(3),
+            mode: Some(QueryMode::Hits),
+            max_tokens: None,
+            max_items: Some(3),
         }))
         .await;
     let err = search.expect_err("an unknown document_id must not resolve to the whole corpus");
@@ -215,21 +220,21 @@ async fn test_mcp_unknown_document_id_is_an_error_not_a_silent_corpus_wide_searc
     );
 
     let hybrid = server
-        .document_search_hybrid(Parameters(DocumentSearchHybridParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: Some(unknown.clone()),
-            limit: Some(3),
-            bm25_weight: None,
-            semantic_weight: None,
-            structural_weight: None,
+            mode: Some(QueryMode::Hits),
+            max_tokens: None,
+            max_items: Some(3),
         }))
         .await;
     assert!(hybrid.is_err(), "hybrid search must reject an unknown id");
 
     let evidence = server
-        .document_get_evidence(Parameters(DocumentGetEvidenceParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: Some(unknown.clone()),
+            mode: Some(QueryMode::Evidence),
             max_tokens: Some(500),
             max_items: Some(2),
         }))
@@ -237,11 +242,12 @@ async fn test_mcp_unknown_document_id_is_an_error_not_a_silent_corpus_wide_searc
     assert!(evidence.is_err(), "evidence must reject an unknown id");
 
     let context = server
-        .document_get_context(Parameters(DocumentGetContextParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: Some(unknown),
+            mode: Some(QueryMode::Context),
             max_tokens: Some(600),
-            max_chunks: Some(2),
+            max_items: Some(2),
         }))
         .await;
     assert!(context.is_err(), "context must reject an unknown id");
@@ -253,10 +259,12 @@ async fn test_mcp_unknown_document_id_is_an_error_not_a_silent_corpus_wide_searc
 async fn test_mcp_blank_document_id_is_treated_as_no_filter() {
     let server = create_test_server();
     let resp = server
-        .document_search(Parameters(DocumentSearchParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: Some("   ".to_string()),
-            limit: Some(3),
+            mode: Some(QueryMode::Hits),
+            max_tokens: None,
+            max_items: Some(3),
         }))
         .await
         .expect("a blank document_id must mean 'search everything'");
@@ -270,10 +278,12 @@ async fn test_mcp_blank_document_id_is_treated_as_no_filter() {
 async fn test_mcp_document_id_accepts_a_content_hash() {
     let server = create_test_server();
     let resp = server
-        .document_search(Parameters(DocumentSearchParams {
+        .document_query(Parameters(DocumentQueryParams {
             query: "ramas locales".to_string(),
             document_id: Some("hashgit123".to_string()),
-            limit: Some(3),
+            mode: Some(QueryMode::Hits),
+            max_tokens: None,
+            max_items: Some(3),
         }))
         .await
         .expect("a content hash is a valid document identifier");
