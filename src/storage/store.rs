@@ -82,11 +82,7 @@ impl MemoryTier {
         if let Some(previous) = self.docs.insert(id.clone(), doc) {
             self.bytes = self.bytes.saturating_sub(resident_bytes(&previous));
         }
-        self.bytes += self
-            .docs
-            .get(&id)
-            .map(resident_bytes)
-            .unwrap_or_default();
+        self.bytes += self.docs.get(&id).map(resident_bytes).unwrap_or_default();
         self.touch(&id);
         self.evict_to_budget();
     }
@@ -141,6 +137,17 @@ impl DocumentStore {
         } else {
             0
         };
+        Self::with_memory_budget(disk, budget)
+    }
+
+    /// Create a store that holds at most `budget_bytes` of page text in memory.
+    ///
+    /// Zero means unbounded. Passing a budget without a disk cache makes eviction
+    /// lossy, since there is nowhere to reload an evicted document from, so that
+    /// combination is rejected back to unbounded rather than silently dropping
+    /// documents the caller cannot get back.
+    pub fn with_memory_budget(disk: Option<DiskCache>, budget_bytes: usize) -> Self {
+        let budget = if disk.is_some() { budget_bytes } else { 0 };
 
         let store = Self {
             memory: Arc::new(RwLock::new(MemoryTier::with_budget(budget))),
@@ -193,10 +200,10 @@ impl DocumentStore {
         // 1. In memory, by id, then by content hash. The disk branch below accepts
         //    either identifier, so without the second a hash would only resolve
         //    when a disk cache is configured.
-        if let Ok(mut mem) = self.memory.write() {
-            if let Some(doc) = mem.get(id).or_else(|| mem.get_by_hash(id)) {
-                return Some(doc);
-            }
+        if let Ok(mut mem) = self.memory.write()
+            && let Some(doc) = mem.get(id).or_else(|| mem.get_by_hash(id))
+        {
+            return Some(doc);
         }
 
         // 2. Check disk cache
@@ -266,5 +273,159 @@ impl DocumentStore {
         let mut list: Vec<DocumentMetadata> = map.into_values().collect();
         list.sort_by(|a, b| a.id.cmp(&b.id));
         list
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::model::Page;
+
+    /// A document whose page text is `bytes` long, so budgets are exact in tests.
+    fn doc_of(id: &str, bytes: usize) -> Document {
+        let mut doc = Document::new(DocumentMetadata {
+            id: id.to_string(),
+            title: id.to_string(),
+            total_pages: 1,
+            content_hash: format!("hash-{id}"),
+            indexed_at: "2026-01-01T00:00:00Z".to_string(),
+            ..Default::default()
+        });
+        doc.add_page(Page::new(1, "x".repeat(bytes)));
+        doc
+    }
+
+    /// Over budget, the least recently used document is the one dropped.
+    ///
+    /// Regression: there was no eviction path at all - no `remove`, no `clear`,
+    /// no `retain` - so a server left running grew to hold whatever had been
+    /// asked about and never gave it back. Measured on a corpus of five public
+    /// documents, 6576 pages: one corpus-wide query left it resident at 513 MB.
+    #[test]
+    fn test_least_recently_used_is_evicted_first() {
+        let mut tier = MemoryTier::with_budget(250);
+        tier.insert(doc_of("a", 100));
+        tier.insert(doc_of("b", 100));
+
+        // Read `a`, which makes `b` the least recently used of the two.
+        assert!(tier.get("a").is_some());
+
+        tier.insert(doc_of("c", 100));
+
+        assert!(tier.get("a").is_some(), "recently read, must survive");
+        assert!(tier.get("c").is_some(), "just inserted, must survive");
+        assert!(
+            tier.get("b").is_none(),
+            "least recently used, must be dropped"
+        );
+        assert_eq!(tier.bytes, 200, "the accounting must follow the eviction");
+    }
+
+    /// A document larger than the whole budget stays rather than thrashing.
+    ///
+    /// Evicting it on arrival would drop it and reload it on the very next call,
+    /// paying the disk read every time and holding it anyway while it is used.
+    #[test]
+    fn test_a_document_larger_than_the_budget_is_kept() {
+        let mut tier = MemoryTier::with_budget(100);
+        tier.insert(doc_of("small", 50));
+        tier.insert(doc_of("huge", 5_000));
+
+        assert!(
+            tier.get("huge").is_some(),
+            "the document just asked for must be resident"
+        );
+        assert!(
+            tier.get("small").is_none(),
+            "everything else gives way to it"
+        );
+    }
+
+    /// A zero budget means unbounded, which is what a store with nowhere to
+    /// reload from uses.
+    #[test]
+    fn test_zero_budget_never_evicts() {
+        let mut tier = MemoryTier::with_budget(0);
+        for i in 0..20 {
+            tier.insert(doc_of(&format!("d{i}"), 1_000));
+        }
+        assert!(
+            tier.get("d0").is_some(),
+            "nothing may be dropped without a budget"
+        );
+        assert_eq!(tier.docs.len(), 20);
+    }
+
+    /// Re-inserting a document replaces its size rather than adding to it.
+    #[test]
+    fn test_reinserting_does_not_double_count() {
+        let mut tier = MemoryTier::with_budget(0);
+        tier.insert(doc_of("a", 100));
+        tier.insert(doc_of("a", 300));
+        assert_eq!(tier.docs.len(), 1);
+        assert_eq!(tier.bytes, 300);
+    }
+
+    /// A store with no disk cache must never evict: there is nowhere to reload
+    /// from, so dropping a document would lose it.
+    #[test]
+    fn test_a_store_without_a_disk_cache_is_unbounded() {
+        let store = DocumentStore::with_memory_budget(None, 10);
+        for i in 0..5 {
+            store
+                .insert(doc_of(&format!("d{i}"), 1_000))
+                .expect("insert");
+        }
+        for i in 0..5 {
+            assert!(
+                store.get(&format!("d{i}")).is_some(),
+                "a document handed to a store with no disk cache cannot be dropped"
+            );
+        }
+    }
+
+    /// An evicted document is not lost: it comes back from the disk cache.
+    #[test]
+    fn test_an_evicted_document_reloads_from_disk() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = DiskCache::new(dir.path()).expect("cache");
+        let store = DocumentStore::with_memory_budget(Some(cache), 250);
+
+        store.insert(doc_of("a", 100)).expect("insert a");
+        store.insert(doc_of("b", 100)).expect("insert b");
+        store.insert(doc_of("c", 100)).expect("insert c");
+
+        // `a` was evicted to make room, so this read has to come off disk.
+        let recovered = store
+            .get("a")
+            .expect("an evicted document must still resolve");
+        assert_eq!(recovered.pages[0].text.len(), 100, "and come back whole");
+    }
+
+    /// Listing documents is not a use of them.
+    ///
+    /// Otherwise an agent calling `document_list` every turn would keep the whole
+    /// corpus looking equally hot, and the eviction order would carry no
+    /// information about what is actually being read.
+    #[test]
+    fn test_listing_does_not_disturb_the_eviction_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = DiskCache::new(dir.path()).expect("cache");
+        let store = DocumentStore::with_memory_budget(Some(cache), 250);
+
+        store.insert(doc_of("a", 100)).expect("insert a");
+        store.insert(doc_of("b", 100)).expect("insert b");
+        assert!(store.get("a").is_some(), "read a, making b the older one");
+
+        assert_eq!(store.list_documents().len(), 2);
+
+        store.insert(doc_of("c", 100)).expect("insert c");
+
+        let resident = store.memory.read().expect("lock");
+        assert!(resident.docs.contains_key("a"), "a was read, so it stays");
+        assert!(
+            !resident.docs.contains_key("b"),
+            "b was only listed, so it goes"
+        );
     }
 }

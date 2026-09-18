@@ -139,12 +139,28 @@ fn main() {
 
     let n = scorable.len().max(1);
     let u = set.unanswerable.len().max(1);
-    println!("RETRIEVAL   answer in top-{TOP_K}     {found}/{}  ({:.0}%)", scorable.len(), 100.0 * found as f64 / n as f64);
+    println!(
+        "RETRIEVAL   answer in top-{TOP_K}     {found}/{}  ({:.0}%)",
+        scorable.len(),
+        100.0 * found as f64 / n as f64
+    );
     println!("            of those, paraphrased  {para_found}/{para_total}");
-    println!("            wrongly refused        {refused}/{}  ({:.0}%)", scorable.len(), 100.0 * refused as f64 / n as f64);
+    println!(
+        "            wrongly refused        {refused}/{}  ({:.0}%)",
+        scorable.len(),
+        100.0 * refused as f64 / n as f64
+    );
     println!();
-    println!("ABSTENTION  correctly refused      {abstained}/{}  ({:.0}%)", set.unanswerable.len(), 100.0 * abstained as f64 / u as f64);
-    println!("            answered anyway        {}/{}", leaked.len(), set.unanswerable.len());
+    println!(
+        "ABSTENTION  correctly refused      {abstained}/{}  ({:.0}%)",
+        set.unanswerable.len(),
+        100.0 * abstained as f64 / u as f64
+    );
+    println!(
+        "            answered anyway        {}/{}",
+        leaked.len(),
+        set.unanswerable.len()
+    );
 
     if !skipped.is_empty() {
         let mut by_doc: HashMap<&str, usize> = HashMap::new();
@@ -161,7 +177,10 @@ fn main() {
         println!("\nMissed:");
         for (q, landed) in &misses {
             println!("  {}", q.question.chars().take(84).collect::<String>());
-            println!("     wanted p.{}-{} ({})", q.expected_page_start, q.expected_page_end, q.grounded_in);
+            println!(
+                "     wanted p.{}-{} ({})",
+                q.expected_page_start, q.expected_page_end, q.grounded_in
+            );
             println!("     got    {landed}");
         }
     }

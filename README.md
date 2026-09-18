@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/yoiberdev/docugraph-mcp/actions/workflows/ci.yml"><img src="https://github.com/yoiberdev/docugraph-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/yoiberdev/docugraph-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/yoiberdev/docugraph-mcp?color=brightgreen" alt="Release"></a>
-  <img src="https://img.shields.io/badge/tests-126-brightgreen" alt="126 tests">
+  <img src="https://img.shields.io/badge/tests-133-brightgreen" alt="133 tests">
   <img src="https://img.shields.io/badge/network-none-blue" alt="No network">
   <img src="https://img.shields.io/badge/API%20keys-none-blue" alt="No API keys">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
@@ -255,7 +255,7 @@ Issues and pull requests welcome. The bar for a change to the retrieval engine i
 not an argument; see [docs/git-workflow.md](docs/git-workflow.md).
 
 ```bash
-cargo test --all          # 126 tests
+cargo test --all          # 133 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```

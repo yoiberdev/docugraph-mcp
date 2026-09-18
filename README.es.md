@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/yoiberdev/docugraph-mcp/actions/workflows/ci.yml"><img src="https://github.com/yoiberdev/docugraph-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/yoiberdev/docugraph-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/yoiberdev/docugraph-mcp?color=brightgreen" alt="Release"></a>
-  <img src="https://img.shields.io/badge/tests-126-brightgreen" alt="126 tests">
+  <img src="https://img.shields.io/badge/tests-133-brightgreen" alt="133 tests">
   <img src="https://img.shields.io/badge/red-ninguna-blue" alt="Sin red">
   <img src="https://img.shields.io/badge/API%20keys-ninguna-blue" alt="Sin API keys">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
@@ -56,16 +56,15 @@ NIST SP 800-53r5, el Código Penal español consolidado y <em>Operating Systems:
 Pieces</em>. 6.576 páginas, 4,96 millones de tokens. Todos los números son reproducibles, ver
 <a href="#lo-medido">Lo medido</a>.</sub>
 
-## Sabe cuándo no sabe
+## Puede decir "sin evidencia", con un límite que debes leer
 
-Esta es la parte que la mayoría de sistemas de recuperación no tiene.
+La mayoría de sistemas de recuperación no sabe negarse. Una búsqueda vectorial devuelve `k`
+resultados preguntes lo que preguntes, así que algo que el documento no cubre vuelve como los
+pasajes menos malos, ordenados, con formato, e indistinguibles de respuestas reales. Tu agente
+razona entonces sobre ellos.
 
-Una búsqueda vectorial siempre devuelve `k` resultados. Pregúntale algo que el documento no cubre
-y te devuelve los pasajes menos malos, ordenados, con formato, e indistinguibles de respuestas
-reales. Tu agente razona entonces sobre ellos.
-
-DocuGraph mide cuánta *información* de tu pregunta carga realmente un pasaje, usando IDF contra el
-propio corpus, y se niega cuando nada supera el listón:
+DocuGraph mide cuánta *información* de tu pregunta carga un pasaje, usando IDF contra el corpus, y
+se niega cuando nada supera el listón:
 
 ```
 > "cuál es la dosis recomendada de ibuprofeno"
@@ -74,9 +73,14 @@ Sin evidencia en el corpus indexado.
 Términos ausentes de todos los documentos: ibuprofeno, dosis, recomendada
 ```
 
-No hay umbral que ajustar ni constante que recalibrar por documento. El listón es la información
-media de tus propios términos, así que preguntar por algo que el corpus no tiene lo **sube** en
-vez de bajarlo.
+**Esto funciona con preguntas de otro dominio y todavía no funciona con preguntas adyacentes.**
+Medido contra [15 preguntas etiquetadas](benchmarks/) que ningún documento indexado responde,
+sobre un corpus de cinco documentos: **0 de 15 rechazadas correctamente**. Preguntarle a un manual
+de bases de datos por ajustes de MySQL, o a un código legal por otra norma, devuelve pasajes en
+vez de un rechazo, porque el vocabulario técnico compartido supera el listón.
+
+El mecanismo es real y el límite es real. Los dos están medidos, y el benchmark que los mide viene
+en este repositorio para que compruebes cualquiera de los dos.
 
 ## Cómo se compara
 
@@ -89,7 +93,7 @@ embeddings más listo.
 | Necesita API key | **no** | sí | normalmente | n/a |
 | Funciona sin conexión | **sí** | no | depende | no |
 | Llamadas a un LLM por consulta | **0** | 1+ | 0-1 | n/a |
-| Dice "sin evidencia" | **sí** | no | no | no |
+| Dice "sin evidencia" | **en parte** (ver arriba) | no | no | no |
 | Cita la página exacta | **sí** | varía | rara vez | no |
 | Instalación | **un binario** | npm + cuenta | servidor + modelo | integrado |
 | Aguanta un PDF de 3.000 páginas | **sí** | sí | sí | no |
@@ -186,8 +190,9 @@ Todo lo anterior, reproducible en tu máquina. Ningún número sale de un fixtur
 | Indexar el manual de PostgreSQL | 9,5 s | 3.100 páginas |
 | Indexar NIST SP 800-53r5 | 2,4 s | 492 páginas |
 | Fragmentos repetidos devueltos | 0% | era 13% antes del dedup |
-| Recuperación, vocabulario del documento | 4/4 | preguntas etiquetadas |
-| Recuperación, preguntas parafraseadas | 5/6 | preguntas etiquetadas |
+| Respuesta en el top 3 | 15/40 (38%) | [set etiquetado](benchmarks/), 5 documentos |
+| Rechazó mal una pregunta cubierta | 0/40 (0%) | igual |
+| Rechazó bien una no cubierta | 0/15 (0%) | igual |
 | Coste de esquema de herramientas | 1.907 tokens | `tools/list` real por stdio |
 
 Corpus:
@@ -212,9 +217,19 @@ modelo de embeddings real lo haría mejor en paráfrasis, y costaría el binario
 de funcionar sin conexión y la ausencia de pesos de modelo. Ese es el intercambio que este
 proyecto ha elegido.
 
-**La abstención no es un comprobador de acierto.** Atrapa *"el corpus no cubre esto"*. No atrapa
-*"el corpus cubre esto, en otro sitio"*. Una respuesta equivocada y convencida, sacada de una
-sección vecina, sigue siendo posible.
+**La abstención no supera una prueba dura: el número es 0 de 15.** Atrapa preguntas sin ningún
+vocabulario en común con el corpus. No atrapa una pregunta de un dominio adyacente, ni tampoco
+*"el corpus cubre esto, en otro sitio"*. El listón es la información media de los términos de la
+consulta, así que una pregunta que comparte palabras técnicas corrientes con el corpus lo supera
+aunque nada de lo que preguntó esté ahí. Subir el listón hasta que las rechace también rechaza
+preguntas reales: en el punto donde rechaza 8 de 15, rechaza mal 6 de 40 cubiertas, que es el peor
+error. Esto es un problema abierto del proyecto, no uno resuelto.
+
+**La recuperación encuentra la respuesta en el top 3 en el 38% de un set etiquetado.** Medido
+sobre 40 preguntas deliberadamente parafraseadas en cinco documentos, donde el motor debe acertar
+el documento *y* la sección entre 8.780. Con frases más fáciles va mucho mejor — preguntas que
+usan el vocabulario del propio documento dieron 4/4 en una prueba más pequeña — pero el 38% es el
+número honesto para preguntas hechas como la gente las hace de verdad.
 
 **Indexar es un paso aparte.** Por diseño, pero implica una puesta en marcha de dos pasos en vez
 de apuntar el agente a una carpeta y ya.
@@ -244,7 +259,7 @@ Issues y pull requests bienvenidos. El listón para cambiar el motor de recupera
 medición, no un argumento; ver [docs/git-workflow.md](docs/git-workflow.md).
 
 ```bash
-cargo test --all          # 126 tests
+cargo test --all          # 133 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```
