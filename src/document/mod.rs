@@ -29,7 +29,7 @@ pub use layout::{
 };
 pub use links::{
     decode_pdf_string, extract_page_links, object_to_string, resolve_dest,
-    resolve_named_destination,
+    resolve_named_destination, resolve_to_string,
 };
 pub use model::{
     Document, DocumentId, DocumentLink, DocumentMetadata, EmbeddedAttachment, FormField,

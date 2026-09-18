@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
-use super::links::{object_to_string, resolve_dest};
+use super::links::{resolve_dest, resolve_to_string};
 use super::model::{Page, SectionNode};
 use super::structure::{infer_sections_from_pages, slugify_title};
 
@@ -194,7 +194,7 @@ fn traverse_one_outline_item(
     let title = item_dict
         .get(b"Title")
         .ok()
-        .and_then(object_to_string)
+        .and_then(|obj| resolve_to_string(walk.doc, obj))
         .unwrap_or_else(|| "Untitled Section".to_string());
 
     let page_target = resolve_outline_page(walk.doc, item_dict, walk.page_map).unwrap_or(1);

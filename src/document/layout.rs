@@ -725,14 +725,8 @@ impl ReadingOrderStrategy for MultiColumnSpatialFlow {
         }
 
         // Identify content bounding box
-        let content_x_min = fragments
-            .iter()
-            .map(|f| f.bbox.x_min())
-            .fold(f32::INFINITY, f32::min);
-        let content_x_max = fragments
-            .iter()
-            .map(|f| f.bbox.x_max())
-            .fold(f32::NEG_INFINITY, f32::max);
+        let (content_x_min, content_x_max) =
+            page_x_extent(fragments).unwrap_or((0.0, MAX_PAGE_COORD));
         let content_width = (content_x_max - content_x_min).max(1.0);
 
         // Separate spanning elements (headers/footers spanning across columns) from column-bound elements
@@ -918,6 +912,36 @@ pub fn group_fragments_into_lines(fragments: &[TextFragment]) -> Vec<TextLine> {
     result
 }
 
+/// The largest side a page may declare is 14400 pt, 200 inches, which is the limit
+/// in the specification. A text fragment outside that range did not come from the
+/// page geometry but from a degenerate text matrix.
+const MAX_PAGE_COORD: f32 = 14_400.0;
+
+/// The horizontal extent of the fragments that could physically be on the page.
+///
+/// Returns `None` when no fragment qualifies, which is the caller's signal that this
+/// page has no geometry worth reasoning about.
+///
+/// Taking the extent over every fragment instead was not merely inaccurate. The
+/// extent sizes the occupancy array in [`select_reading_order_strategy`], so one
+/// fragment with a runaway coordinate sizes that array by it. NIST SP 800-53r5, a
+/// public 500-page document, carries fragments near 6.2e9 pt: the array came to
+/// 3.1e9 bins and the process aborted on a 24.8 GB allocation after twelve minutes.
+/// A page whose fragments are all non-finite was worse still, because
+/// `f32::INFINITY as usize` saturates rather than wrapping, asking for `usize::MAX`.
+fn page_x_extent(fragments: &[TextFragment]) -> Option<(f32, f32)> {
+    let (mut min_x, mut max_x) = (f32::INFINITY, f32::NEG_INFINITY);
+    for f in fragments {
+        let (lo, hi) = (f.bbox.x_min(), f.bbox.x_max());
+        if !lo.is_finite() || !hi.is_finite() || lo < -MAX_PAGE_COORD || hi > MAX_PAGE_COORD {
+            continue;
+        }
+        min_x = min_x.min(lo);
+        max_x = max_x.max(hi);
+    }
+    (min_x <= max_x).then_some((min_x, max_x))
+}
+
 /// Analyze text fragments on a page and detect whether multi-column gutters exist.
 /// Returns the optimal `Box<dyn ReadingOrderStrategy>`:
 /// - `MultiColumnSpatialFlow` if distinct vertical gutters partition the text.
@@ -927,14 +951,9 @@ pub fn select_reading_order_strategy(fragments: &[TextFragment]) -> Box<dyn Read
         return Box::new(SingleColumnFlow);
     }
 
-    let min_x = fragments
-        .iter()
-        .map(|f| f.bbox.x_min())
-        .fold(f32::INFINITY, f32::min);
-    let max_x = fragments
-        .iter()
-        .map(|f| f.bbox.x_max())
-        .fold(f32::NEG_INFINITY, f32::max);
+    let Some((min_x, max_x)) = page_x_extent(fragments) else {
+        return Box::new(SingleColumnFlow);
+    };
     let content_width = max_x - min_x;
 
     // Minimum width required to form 2 columns
